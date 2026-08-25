@@ -13,15 +13,15 @@ const io = new Server(server, {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ទិន្នន័យ User (Admin អាចចូលបានគ្រប់បន្ទប់: 'all')
+// Admin ដើម (assignedRoom: 'all' អាចចូលបានគ្រប់បន្ទប់)
 const users = [
   { username: 'admin', password: '123', role: 'admin', assignedRoom: 'all' }
 ];
 
-const rooms = ['room-1'];
+const rooms = ['room-1', 'room-2'];
 const roomUsers = {};
 
-// API សម្រាប់ Login និងផ្ទៀងផ្ទាត់សិទ្ធិចូលបន្ទប់
+// API Login
 app.post('/api/login', (req, res) => {
   const { username, password, roomId } = req.body;
   const user = users.find(u => u.username === username && u.password === password);
@@ -30,7 +30,7 @@ app.post('/api/login', (req, res) => {
     return res.status(401).json({ success: false, message: 'ឈ្មោះ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ!' });
   }
 
-  // ផ្ទៀងផ្ទាត់សិទ្ធិចូលបន្ទប់ (Admin ចូលបានទាំងអស់, Member ចូលបានតែបន្ទប់ដែលកំណត់)
+  // Admin អាចចូលបានគ្រប់បន្ទប់ ចំណែក Member ចូលបានតែបន្ទប់កំណត់
   if (user.role !== 'admin' && user.assignedRoom !== roomId) {
     return res.status(403).json({ 
       success: false, 
@@ -48,11 +48,11 @@ app.post('/api/login', (req, res) => {
   });
 });
 
-// API សម្រាប់ Admin បង្កើត User ថ្មីដោយកំណត់បន្ទប់ឱ្យស្រាប់
+// API Admin បង្កើត User
 app.post('/api/create-user', (req, res) => {
   const { username, password, assignedRoom } = req.body;
   if (!username || !password || !assignedRoom) {
-    return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់ រួមទាំងបន្ទប់!' });
+    return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់!' });
   }
   
   const exists = users.find(u => u.username === username);
@@ -62,7 +62,7 @@ app.post('/api/create-user', (req, res) => {
   res.json({ success: true, message: `បង្កើត User ជោគជ័យ សម្រាប់បន្ទប់ ${assignedRoom}!` });
 });
 
-// API សម្រាប់ Admin បង្កើតបន្ទប់ថ្មី
+// API Admin បង្កើតបន្ទប់ថ្មី
 app.post('/api/create-room', (req, res) => {
   const { roomId } = req.body;
   if (!roomId) return res.status(400).json({ message: 'សូមបញ្ចូលឈ្មោះបន្ទប់!' });
@@ -75,7 +75,20 @@ app.post('/api/create-room', (req, res) => {
   res.json({ success: true, message: 'បង្កើតបន្ទប់ជោគជ័យ!', rooms });
 });
 
-// API យកបញ្ជីបន្ទប់
+// API យកបញ្ជីបន្ទប់ និងចំនួនមនុស្សកំពុងនៅខាងក្នុង
+app.get('/api/rooms-status', (req, res) => {
+  const roomsData = rooms.map(r => {
+    const activeMembers = roomUsers[r] ? roomUsers[r].length : 0;
+    return {
+      roomId: r,
+      userCount: activeMembers,
+      users: roomUsers[r] ? roomUsers[r].map(u => u.username) : []
+    };
+  });
+  res.json({ rooms: roomsData });
+});
+
+// API យកបញ្ជីឈ្មោះបន្ទប់សាមញ្ញ
 app.get('/api/rooms', (req, res) => {
   res.json({ rooms });
 });
