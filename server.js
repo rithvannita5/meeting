@@ -13,9 +13,9 @@ const io = new Server(server, {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Admin ដើម (assignedRoom: 'all' អាចចូលបានគ្រប់បន្ទប់)
-const users = [
-  { username: 'admin', password: '123', role: 'admin', assignedRoom: 'all' }
+// ទិន្នន័យ User
+let users = [
+  { id: 1, username: 'admin', password: '123', role: 'admin', assignedRoom: 'all', isBlocked: false }
 ];
 
 const rooms = ['room-1', 'room-2'];
@@ -30,7 +30,10 @@ app.post('/api/login', (req, res) => {
     return res.status(401).json({ success: false, message: 'ឈ្មោះ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ!' });
   }
 
-  // Admin អាចចូលបានគ្រប់បន្ទប់ ចំណែក Member ចូលបានតែបន្ទប់កំណត់
+  if (user.isBlocked) {
+    return res.status(403).json({ success: false, message: 'គណនីរបស់អ្នកត្រូវបានផ្អាកដំណើរការ (Blocked)!' });
+  }
+
   if (user.role !== 'admin' && user.assignedRoom !== roomId) {
     return res.status(403).json({ 
       success: false, 
@@ -41,11 +44,24 @@ app.post('/api/login', (req, res) => {
   res.json({ 
     success: true, 
     user: { 
+      id: user.id,
       username: user.username, 
       role: user.role, 
       assignedRoom: user.assignedRoom 
     } 
   });
+});
+
+// API ទាញយកបញ្ជី User ទាំងអស់សម្រាប់ Admin
+app.get('/api/users', (req, res) => {
+  const safeUsers = users.map(u => ({
+    id: u.id,
+    username: u.username,
+    role: u.role,
+    assignedRoom: u.assignedRoom,
+    isBlocked: u.isBlocked
+  }));
+  res.json({ users: safeUsers });
 });
 
 // API Admin បង្កើត User
@@ -58,8 +74,65 @@ app.post('/api/create-user', (req, res) => {
   const exists = users.find(u => u.username === username);
   if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
 
-  users.push({ username, password, role: 'member', assignedRoom });
+  const newUser = {
+    id: Date.now(),
+    username,
+    password,
+    role: 'member',
+    assignedRoom,
+    isBlocked: false
+  };
+
+  users.push(newUser);
   res.json({ success: true, message: `បង្កើត User ជោគជ័យ សម្រាប់បន្ទប់ ${assignedRoom}!` });
+});
+
+// API លុប User
+app.delete('/api/users/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  const user = users.find(u => u.id === id);
+  if (user && user.role === 'admin') {
+    return res.status(400).json({ message: 'មិនអាចលុបគណនី Admin បានទេ!' });
+  }
+  users = users.filter(u => u.id !== id);
+  res.json({ success: true, message: 'លុប User រួចរាល់!' });
+});
+
+// API Reset Password
+app.put('/api/users/:id/reset-password', (req, res) => {
+  const id = parseInt(req.params.id);
+  const { newPassword } = req.body;
+  const user = users.find(u => u.id === id);
+  if (!user) return res.status(404).json({ message: 'រកមិនឃើញ User ទេ!' });
+
+  user.password = newPassword;
+  res.json({ success: true, message: `ប្តូរ Password របស់ ${user.username} ជោគជ័យ!` });
+});
+
+// API Block / Unblock User
+app.put('/api/users/:id/toggle-block', (req, res) => {
+  const id = parseInt(req.params.id);
+  const user = users.find(u => u.id === id);
+  if (!user) return res.status(404).json({ message: 'រកមិនឃើញ User ទេ!' });
+  if (user.role === 'admin') return res.status(400).json({ message: 'មិនអាច Block Admin បានទេ!' });
+
+  user.isBlocked = !user.isBlocked;
+  res.json({ 
+    success: true, 
+    message: `${user.isBlocked ? 'បានផ្អាក (Blocked)' : 'បានបើកដំណើរការ (Unblocked)'} User ${user.username} រួចរាល់!`,
+    isBlocked: user.isBlocked
+  });
+});
+
+// API កែប្រែបន្ទប់របស់ User
+app.put('/api/users/:id/edit-room', (req, res) => {
+  const id = parseInt(req.params.id);
+  const { newRoom } = req.body;
+  const user = users.find(u => u.id === id);
+  if (!user) return res.status(404).json({ message: 'រកមិនឃើញ User ទេ!' });
+
+  user.assignedRoom = newRoom;
+  res.json({ success: true, message: `បានប្តូរបន្ទប់របស់ ${user.username} ទៅ ${newRoom} រួចរាល់!` });
 });
 
 // API Admin បង្កើតបន្ទប់ថ្មី
@@ -75,7 +148,7 @@ app.post('/api/create-room', (req, res) => {
   res.json({ success: true, message: 'បង្កើតបន្ទប់ជោគជ័យ!', rooms });
 });
 
-// API យកបញ្ជីបន្ទប់ និងចំនួនមនុស្សកំពុងនៅខាងក្នុង
+// API យកបន្ទប់សកម្ម
 app.get('/api/rooms-status', (req, res) => {
   const roomsData = rooms.map(r => {
     const activeMembers = roomUsers[r] ? roomUsers[r].length : 0;
@@ -88,7 +161,6 @@ app.get('/api/rooms-status', (req, res) => {
   res.json({ rooms: roomsData });
 });
 
-// API យកបញ្ជីឈ្មោះបន្ទប់សាមញ្ញ
 app.get('/api/rooms', (req, res) => {
   res.json({ rooms });
 });
