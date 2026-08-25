@@ -6,15 +6,12 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { 
-  cors: { 
-    origin: "*" 
-  },
+  cors: { origin: "*" },
   transports: ['websocket', 'polling']
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// រក្សាទុកអ្នកប្រើប្រាស់ក្នុងបន្ទប់
 const roomUsers = {};
 
 io.on('connection', (socket) => {
@@ -22,31 +19,26 @@ io.on('connection', (socket) => {
 
   socket.on('join-room', (roomId, peerId) => {
     console.log(`📥 User ${peerId} joined room ${roomId}`);
-    
     socket.join(roomId);
     
     if (!roomUsers[roomId]) {
       roomUsers[roomId] = [];
     }
     
-    // ពិនិត្យមើលថាអ្នកប្រើនេះមានរួចហើយឬនៅ
     const existingUser = roomUsers[roomId].find(u => u.peerId === peerId);
     if (!existingUser) {
       roomUsers[roomId].push({ socketId: socket.id, peerId });
     }
 
-    // ផ្ញើ peerId របស់អ្នកដទៃទៅអ្នកប្រើថ្មី
     const otherUsers = roomUsers[roomId].filter(u => u.peerId !== peerId);
     otherUsers.forEach(user => {
       socket.emit('user-connected', user.peerId);
     });
 
-    // ជូនដំណឹងដល់អ្នកដទៃថាមានអ្នកថ្មី
     socket.to(roomId).emit('user-connected', peerId);
 
     socket.on('disconnect', () => {
       console.log(`🔌 User ${peerId} disconnected from room ${roomId}`);
-      
       if (roomUsers[roomId]) {
         roomUsers[roomId] = roomUsers[roomId].filter(
           user => user.socketId !== socket.id
@@ -57,10 +49,6 @@ io.on('connection', (socket) => {
       }
       socket.to(roomId).emit('user-disconnected', peerId);
     });
-  });
-
-  socket.on('refresh-media', (roomId) => {
-    socket.to(roomId).emit('refresh-media');
   });
 });
 
