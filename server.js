@@ -12,7 +12,6 @@ const io = new Server(server, {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// រក្សាទុកអ្នកប្រើក្នុងបន្ទប់
 const roomUsers = {};
 
 io.on('connection', (socket) => {
@@ -29,17 +28,16 @@ io.on('connection', (socket) => {
       roomUsers[roomId] = [];
     }
     
-    // បន្ថែមអ្នកប្រើថ្មី
     const existingUser = roomUsers[roomId].find(u => u.peerId === peerId);
     if (!existingUser) {
       roomUsers[roomId].push({ socketId: socket.id, peerId, username });
     }
 
-    // **សំខាន់៖ ផ្ញើបញ្ជីអ្នកប្រើទាំងអស់ទៅអ្នកដែលទើបចូល**
+    // **សំខាន់៖ ផ្ញើបញ្ជីអ្នកប្រើទាំងអស់**
     const allUsers = roomUsers[roomId].filter(u => u.peerId !== peerId);
     socket.emit('all-users', allUsers);
 
-    // **សំខាន់៖ ជូនដំណឹងអ្នកដទៃថាមានអ្នកថ្មី**
+    // **សំខាន់៖ ជូនដំណឹងអ្នកដទៃ**
     socket.to(roomId).emit('user-joined', { peerId, username });
 
     socket.on('disconnect', () => {
@@ -49,8 +47,6 @@ io.on('connection', (socket) => {
         roomUsers[roomId] = roomUsers[roomId].filter(
           user => user.socketId !== socket.id
         );
-        
-        // ជូនដំណឹងអ្នកដទៃ
         socket.to(roomId).emit('user-left', socket.data.peerId);
         
         if (roomUsers[roomId].length === 0) {
@@ -60,7 +56,6 @@ io.on('connection', (socket) => {
     });
   });
 
-  // **សំខាន់៖ ស្នើសុំបញ្ជីអ្នកប្រើ**
   socket.on('get-users', (roomId) => {
     if (roomUsers[roomId]) {
       const users = roomUsers[roomId].filter(u => u.socketId !== socket.id);
