@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="km">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice & Screen Share App</title>
+  <style>
+    * { box-sizing: border-box; font-family: sans-serif; }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f0f2f5; }
+    .card { background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 90%; max-width: 400px; text-align: center; }
+    input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; }
+    button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; margin: 5px; font-weight: bold; }
+    button:hover { background: #0056b3; }
+    .hidden { display: none; }
+    #room-container { width: 90%; max-width: 1000px; text-align: center; }
+    .video-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; margin-top: 15px; }
+    video { width: 100%; max-width: 460px; height: 280px; background: #1a1a1a; border-radius: 8px; object-fit: contain; }
+    .controls { margin-bottom: 15px; }
+  </style>
+</head>
+<body>
+
+  <!-- Auth Box -->
+  <div id="auth" class="card">
+    <h2>ចូលរួមបន្ទប់ (Join Room)</h2>
+    <input type="text" id="username" placeholder="ឈ្មោះរបស់អ្នក" required />
+    <input type="text" id="roomInput" placeholder="លេខសម្គាល់បន្ទប់ (Room ID)" value="room-1" required />
+    <button onclick="login()">ចូលរួមបន្ទប់</button>
+  </div>
+
+  <!-- Meeting Room Container -->
+  <div id="room-container" class="hidden">
+    <h3 id="welcome-text"></h3>
+    <div class="controls">
+      <button id="micBtn" onclick="toggleMic()">បិទ/បើក មេក្រូ (Mic)</button>
+      <button onclick="shareScreen()">Share Screen</button>
+      <button onclick="leaveRoom()" style="background: #dc3545;">ចាកចេញ</button>
+    </div>
+    <div class="video-container">
+      <div>
+        <p><strong>អេក្រង់/សំឡេងរបស់អ្នក (You)</strong></p>
+        <video id="localVideo" autoplay playsinline muted></video>
+      </div>
+      <div>
+        <p><strong>អេក្រង់/សំឡេងដៃគូ (Partner)</strong></p>
+        <video id="remoteVideo" autoplay playsinline></video>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
