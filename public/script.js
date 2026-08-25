@@ -2,6 +2,7 @@ const socket = io();
 let myPeer;
 let myId = '';
 let myUsername = '';
+let currentUserRole = '';
 let currentRoomId = '';
 let localStream = null;
 const peerConnections = {};
@@ -18,6 +19,21 @@ function makeFullscreen(elem) {
 }
 
 localVideo.onclick = () => makeFullscreen(localVideo);
+
+// ទាញយកបញ្ជីបន្ទប់ពេលបើក Web ដំបូង
+window.onload = async () => {
+  try {
+    const res = await fetch('/api/rooms');
+    const data = await res.json();
+    const select = document.getElementById('roomSelect');
+    select.innerHTML = '';
+    data.rooms.forEach(r => {
+      select.innerHTML += `<option value="${r}">${r}</option>`;
+    });
+  } catch (err) {
+    console.error('Error fetching rooms:', err);
+  }
+};
 
 // បង្កើត Dummy Media Stream ប្រសិនបើគ្មាន Camera/Mic
 function createDummyMediaStream() {
@@ -41,7 +57,6 @@ function createDummyMediaStream() {
   return new MediaStream([videoTrack, audioTrack]);
 }
 
-// ជ្រើសរើស Stream ណាដែលកំពុងដំណើរការ (បើកំពុង Share Screen យក ScreenStream)
 function getCurrentActiveStream() {
   if (isScreenSharing && screenStream) {
     return screenStream;
@@ -49,21 +64,95 @@ function getCurrentActiveStream() {
   return localStream;
 }
 
+// មុខងារ Login
 async function login() {
   const username = document.getElementById('username').value.trim();
-  const roomId = document.getElementById('roomInput').value.trim();
-  if (!username || !roomId) return alert('សូមបំពេញឈ្មោះ និងលេខបន្ទប់!');
+  const password = document.getElementById('password').value.trim();
+  const roomId = document.getElementById('roomSelect').value;
 
-  myUsername = username;
-  currentRoomId = roomId;
+  if (!username || !password) return alert('សូមបំពេញ Username និង Password!');
 
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+
+    if (!data.success) {
+      return alert(data.message);
+    }
+
+    myUsername = data.user.username;
+    currentUserRole = data.user.role;
+    currentRoomId = roomId;
+
+    if (currentUserRole === 'admin') {
+      document.getElementById('auth').classList.add('hidden');
+      document.getElementById('admin-dashboard').classList.remove('hidden');
+    } else {
+      startMeeting();
+    }
+  } catch (err) {
+    alert('មានបញ្ហាក្នុងការ Login!');
+  }
+}
+
+// មុខងារ Admin បង្កើត User
+async function createNewUser() {
+  const username = document.getElementById('newUsername').value.trim();
+  const password = document.getElementById('newPassword').value.trim();
+  if (!username || !password) return alert('សូមបំពេញព័ត៌មាន!');
+
+  const res = await fetch('/api/create-user', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  const data = await res.json();
+  alert(data.message);
+  if (data.success) {
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newPassword').value = '';
+  }
+}
+
+// មុខងារ Admin បង្កើត Room
+async function createNewRoom() {
+  const roomId = document.getElementById('newRoomId').value.trim();
+  if (!roomId) return alert('សូមបញ្ចូលឈ្មោះបន្ទប់!');
+
+  const res = await fetch('/api/create-room', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomId })
+  });
+  const data = await res.json();
+  alert(data.message);
+  if (data.success) {
+    document.getElementById('newRoomId').value = '';
+    const select = document.getElementById('roomSelect');
+    select.innerHTML = '';
+    data.rooms.forEach(r => {
+      select.innerHTML += `<option value="${r}">${r}</option>`;
+    });
+  }
+}
+
+function proceedToMeeting() {
+  document.getElementById('admin-dashboard').classList.add('hidden');
+  startMeeting();
+}
+
+// ចាប់ផ្ដើមការប្រជុំ (Meeting)
+async function startMeeting() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ 
       audio: true, 
       video: true 
     });
   } catch (err) {
-    console.log('មិនមាន Camera/Mic ពេញលេញ:', err);
     try {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       const dummy = createDummyMediaStream();
@@ -100,17 +189,13 @@ async function login() {
 
   myPeer.on('open', (id) => {
     myId = id;
-    console.log('✅ My Peer ID:', myId);
-    
     document.getElementById('auth').classList.add('hidden');
     document.getElementById('room-container').classList.remove('hidden');
-    document.getElementById('welcome-text').innerText = `👋 សួស្តី ${username} | បន្ទប់: ${roomId}`;
-
-    socket.emit('join-room', roomId, id, username);
+    document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId}`;
+    socket.emit('join-room', currentRoomId, id, myUsername);
   });
 
   myPeer.on('call', (call) => {
-    console.log('📞 Incoming call from:', call.peer);
     handleIncomingCall(call);
   });
 
@@ -284,7 +369,7 @@ async function shareScreen() {
 
     const screenTrack = screenStream.getVideoTracks()[0];
 
-    // ប្តូរ Track ទៅកាន់ដៃគូទាំងអស់ដែលមានស្រាប់
+    // ប្តូរ Track ទៅកាន់ដៃគូទាំងអស់
     for (const [peerId, call] of Object.entries(peerConnections)) {
       const pc = call.peerConnection;
       if (!pc) continue;
