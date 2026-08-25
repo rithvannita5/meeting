@@ -20,7 +20,6 @@ function makeFullscreen(elem) {
 
 localVideo.onclick = () => makeFullscreen(localVideo);
 
-// ផ្ទុកបញ្ជីបន្ទប់ចូលក្នុង Dropdown ទាំងអស់
 async function loadRooms() {
   try {
     const res = await fetch('/api/rooms');
@@ -42,6 +41,37 @@ async function loadRooms() {
 }
 
 window.onload = loadRooms;
+
+// ទាញយកបន្ទប់សកម្មសម្រាប់ Admin មើល
+async function loadAdminRoomMonitor() {
+  try {
+    const res = await fetch('/api/rooms-status');
+    const data = await res.json();
+    const container = document.getElementById('activeRoomsList');
+    container.innerHTML = '';
+
+    data.rooms.forEach(room => {
+      const isLive = room.userCount > 0;
+      const badge = isLive 
+        ? `<span class="badge-live">🟢 កំពុងសកម្ម (${room.userCount} នាក់: ${room.users.join(', ')})</span>`
+        : `<span style="color:#aaa; font-size:12px;">⚪ ទំនេរ</span>`;
+
+      container.innerHTML += `
+        <div class="room-item">
+          <div>
+            <strong>បន្ទប់៖ ${room.roomId}</strong><br/>
+            ${badge}
+          </div>
+          <button onclick="adminJoinRoom('${room.roomId}')" style="padding: 6px 15px; font-size: 13px; background: #28a745;">
+            ចូលមើល (Join)
+          </button>
+        </div>
+      `;
+    });
+  } catch (err) {
+    console.error(err);
+  }
+}
 
 function createDummyMediaStream() {
   const canvas = document.createElement('canvas');
@@ -71,7 +101,7 @@ function getCurrentActiveStream() {
   return localStream;
 }
 
-// មុខងារ Login ផ្ទៀងផ្ទាត់ជាមួយ Server
+// មុខងារ Login
 async function login() {
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value.trim();
@@ -98,6 +128,7 @@ async function login() {
     if (currentUserRole === 'admin') {
       document.getElementById('auth').classList.add('hidden');
       document.getElementById('admin-dashboard').classList.remove('hidden');
+      loadAdminRoomMonitor();
     } else {
       startMeeting();
     }
@@ -106,7 +137,17 @@ async function login() {
   }
 }
 
-// Admin បង្កើត User ភ្ជាប់ជាមួយបន្ទប់ជាក់លាក់
+// មុខងារសម្រាប់ Admin ចុចចូលបន្ទប់ជាក់លាក់
+function adminJoinRoom(roomId) {
+  currentRoomId = roomId;
+  document.getElementById('admin-dashboard').classList.add('hidden');
+  startMeeting();
+}
+
+function logoutAdmin() {
+  location.reload();
+}
+
 async function createNewUser() {
   const username = document.getElementById('newUsername').value.trim();
   const password = document.getElementById('newPassword').value.trim();
@@ -127,7 +168,6 @@ async function createNewUser() {
   }
 }
 
-// Admin បង្កើតបន្ទប់ថ្មី
 async function createNewRoom() {
   const roomId = document.getElementById('newRoomId').value.trim();
   if (!roomId) return alert('សូមបញ្ចូលឈ្មោះបន្ទប់!');
@@ -142,12 +182,8 @@ async function createNewRoom() {
   if (data.success) {
     document.getElementById('newRoomId').value = '';
     await loadRooms();
+    if (currentUserRole === 'admin') loadAdminRoomMonitor();
   }
-}
-
-function proceedToMeeting() {
-  document.getElementById('admin-dashboard').classList.add('hidden');
-  startMeeting();
 }
 
 async function startMeeting() {
@@ -425,5 +461,13 @@ function leaveRoom() {
   if (myPeer) myPeer.destroy();
   if (localStream) localStream.getTracks().forEach(track => track.stop());
   socket.disconnect();
-  location.reload();
+
+  if (currentUserRole === 'admin') {
+    // បើ Admin ចាកចេញពីបន្ទប់ ឱ្យត្រឡប់មកកាន់ផ្ទាំង Admin Dashboard វិញ
+    document.getElementById('room-container').classList.add('hidden');
+    document.getElementById('admin-dashboard').classList.remove('hidden');
+    loadAdminRoomMonitor();
+  } else {
+    location.reload();
+  }
 }
