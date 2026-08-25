@@ -5,67 +5,58 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { 
-  cors: { 
-    origin: "*" 
-  },
-  transports: ['websocket', 'polling']
+const io = new Server(server, {
+  cors: { origin: "*" }
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// រក្សាទុកអ្នកប្រើប្រាស់ក្នុងបន្ទប់
-const roomUsers = {};
+// ទុកទិន្នន័យបន្ទប់ និង User
+const rooms = {};
 
 io.on('connection', (socket) => {
-  console.log('🔌 New client connected:', socket.id);
-
-  socket.on('join-room', (roomId, peerId) => {
-    console.log(`📥 User ${peerId} joined room ${roomId}`);
-    
+  socket.on('join-room', (roomId, username) => {
     socket.join(roomId);
-    
-    if (!roomUsers[roomId]) {
-      roomUsers[roomId] = [];
+    socket.roomId = roomId;
+    socket.username = username;
+
+    if (!rooms[roomId]) {
+      rooms[roomId] = [];
     }
-    roomUsers[roomId].push({ socketId: socket.id, peerId });
+    
+    // បន្ថែម Socket ID ទៅក្នុងបន្ទប់
+    rooms[roomId].push(socket.id);
 
-    // **សំខាន់៖ ផ្ញើ peerId របស់អ្នកដទៃទៅអ្នកប្រើថ្មី**
-    const otherUsers = roomUsers[roomId].filter(u => u.peerId !== peerId);
-    otherUsers.forEach(user => {
-      socket.emit('user-connected', user.peerId);
-    });
+    // ផ្ញើបញ្ជីអ្នកដែលមានស្រាប់ក្នុងបន្ទប់ទៅឱ្យ User ថ្មី
+    const otherUsers = rooms[roomId].filter(id => id !== socket.id);
+    socket.emit('all-users', otherUsers);
 
-    // **សំខាន់៖ ជូនដំណឹងដល់អ្នកដទៃថាមានអ្នកថ្មី**
-    socket.to(roomId).emit('user-connected', peerId);
+    // ប្រាប់អ្នកចាស់ក្នុងបន្ទប់ថាមាន User ថ្មីចូលមក
+    socket.to(roomId).emit('user-connected', socket.id);
+  });
 
-    socket.on('disconnect', () => {
-      console.log(`🔌 User ${peerId} disconnected from room ${roomId}`);
-      
-      if (roomUsers[roomId]) {
-        roomUsers[roomId] = roomUsers[roomId].filter(
-          user => user.socketId !== socket.id
-        );
-        if (roomUsers[roomId].length === 0) {
-          delete roomUsers[roomId];
-        }
-      }
-      socket.to(roomId).emit('user-disconnected', peerId);
+  // បញ្ជូនកញ្ចប់ Signaling (Offer, Answer, ICE Candidate)
+  socket.on('signal', (data) => {
+    io.to(data.to).emit('signal', {
+      from: socket.id,
+      signal: data.signal
     });
   });
 
-  socket.on('refresh-media', (roomId) => {
-    socket.to(roomId).emit('refresh-media');
+  // ពេល User ចាកចេញ ឬបិទ Tab
+  socket.on('disconnect', () => {
+    const roomId = socket.roomId;
+    if (roomId && rooms[roomId]) {
+      rooms[roomId] = rooms[roomId].filter(id => id !== socket.id);
+      socket.to(roomId).emit('user-disconnected', socket.id);
+      if (rooms[roomId].length === 0) {
+        delete rooms[roomId];
+      }
+    }
   });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
-});
-
-// **បន្ថែម Signal Handling**
-socket.on('signal', (data) => {
-  console.log(`📡 Signal from ${data.peerId} in room ${data.roomId}`);
-  socket.to(data.roomId).emit('signal', data);
+  console.log(`Server is running on port ${PORT}`);
 });
