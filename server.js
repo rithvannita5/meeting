@@ -28,15 +28,20 @@ io.on('connection', (socket) => {
     if (!roomUsers[roomId]) {
       roomUsers[roomId] = [];
     }
-    roomUsers[roomId].push({ socketId: socket.id, peerId });
+    
+    // ពិនិត្យមើលថាអ្នកប្រើនេះមានរួចហើយឬនៅ
+    const existingUser = roomUsers[roomId].find(u => u.peerId === peerId);
+    if (!existingUser) {
+      roomUsers[roomId].push({ socketId: socket.id, peerId });
+    }
 
-    // **សំខាន់៖ ផ្ញើ peerId របស់អ្នកដទៃទៅអ្នកប្រើថ្មី**
+    // ផ្ញើ peerId របស់អ្នកដទៃទៅអ្នកប្រើថ្មី
     const otherUsers = roomUsers[roomId].filter(u => u.peerId !== peerId);
     otherUsers.forEach(user => {
       socket.emit('user-connected', user.peerId);
     });
 
-    // **សំខាន់៖ ជូនដំណឹងដល់អ្នកដទៃថាមានអ្នកថ្មី**
+    // ជូនដំណឹងដល់អ្នកដទៃថាមានអ្នកថ្មី
     socket.to(roomId).emit('user-connected', peerId);
 
     socket.on('disconnect', () => {
