@@ -1,5 +1,5 @@
 const socket = io();
-let localStream;
+let localStream = null;
 let peerConnection;
 const config = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
@@ -13,26 +13,29 @@ async function login() {
   const roomId = document.getElementById('roomInput').value.trim();
   if (!username || !roomId) return alert('សូមបំពេញឈ្មោះ និងលេខបន្ទប់!');
 
+  // ព្យាយាមចាប់យក Mic បើគ្មាន Mic ឬ User ចុច Block ក៏នៅតែអាចចូលបន្ទប់បាន
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     localVideo.srcObject = localStream;
-
-    document.getElementById('auth').classList.add('hidden');
-    document.getElementById('room-container').classList.remove('hidden');
-    document.getElementById('welcome-text').innerText = `អ្នកប្រើប្រាស់: ${username} | បន្ទប់: ${roomId}`;
-
-    initPeerConnection(roomId);
-    socket.emit('join-room', roomId, socket.id);
   } catch (err) {
-    alert('មិនអាចបើក Microphone បានទេ សូមអនុញ្ញាត Permission!');
-    console.error(err);
+    console.log('ចូលបន្ទប់ដោយគ្មាន Microphone');
+    localStream = new MediaStream(); // បង្កើត Stream ទទេដើម្បីកុំឱ្យ Error
   }
+
+  document.getElementById('auth').classList.add('hidden');
+  document.getElementById('room-container').classList.remove('hidden');
+  document.getElementById('welcome-text').innerText = `អ្នកប្រើប្រាស់: ${username} | បន្ទប់: ${roomId}`;
+
+  initPeerConnection(roomId);
+  socket.emit('join-room', roomId, socket.id);
 }
 
 function initPeerConnection(roomId) {
   peerConnection = new RTCPeerConnection(config);
 
-  localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+  if (localStream) {
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+  }
 
   peerConnection.ontrack = (event) => {
     remoteVideo.srcObject = event.streams[0];
@@ -88,11 +91,12 @@ async function shareScreen() {
 }
 
 function toggleMic() {
-  const audioTrack = localStream.getAudioTracks()[0];
-  if (audioTrack) {
-    audioTrack.enabled = !audioTrack.enabled;
-    document.getElementById('micBtn').innerText = audioTrack.enabled ? 'បិទ មេក្រូ (Mute)' : 'បើក មេក្រូ (Unmute)';
+  if (!localStream || localStream.getAudioTracks().length === 0) {
+    return alert('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!');
   }
+  const audioTrack = localStream.getAudioTracks()[0];
+  audioTrack.enabled = !audioTrack.enabled;
+  document.getElementById('micBtn').innerText = audioTrack.enabled ? 'បិទ មេក្រូ (Mute)' : 'បើក មេក្រូ (Unmute)';
 }
 
 function leaveRoom() {
