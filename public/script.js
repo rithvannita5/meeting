@@ -8,6 +8,7 @@ let localStream = null;
 const peerConnections = {};
 let isScreenSharing = false;
 let screenStream = null;
+let allRoomsList = [];
 
 const localVideo = document.getElementById('localVideo');
 const remoteVideosContainer = document.getElementById('remoteVideos');
@@ -24,6 +25,7 @@ async function loadRooms() {
   try {
     const res = await fetch('/api/rooms');
     const data = await res.json();
+    allRoomsList = data.rooms;
     
     const select = document.getElementById('roomSelect');
     const adminSelect = document.getElementById('userAssignedRoomSelect');
@@ -42,7 +44,7 @@ async function loadRooms() {
 
 window.onload = loadRooms;
 
-// ទាញយកបន្ទប់សកម្មសម្រាប់ Admin មើល
+// ទាញយកបន្ទប់សកម្មសម្រាប់ Admin
 async function loadAdminRoomMonitor() {
   try {
     const res = await fetch('/api/rooms-status');
@@ -62,7 +64,7 @@ async function loadAdminRoomMonitor() {
             <strong>បន្ទប់៖ ${room.roomId}</strong><br/>
             ${badge}
           </div>
-          <button onclick="adminJoinRoom('${room.roomId}')" style="padding: 6px 15px; font-size: 13px; background: #28a745;">
+          <button onclick="adminJoinRoom('${room.roomId}')" style="padding: 6px 12px; font-size: 12px; background: #28a745;">
             ចូលមើល (Join)
           </button>
         </div>
@@ -71,6 +73,94 @@ async function loadAdminRoomMonitor() {
   } catch (err) {
     console.error(err);
   }
+}
+
+// ផ្ទុកបញ្ជី User ទាំងអស់ចូលក្នុង Table
+async function loadUsersTable() {
+  try {
+    const res = await fetch('/api/users');
+    const data = await res.json();
+    const tbody = document.getElementById('userTableBody');
+    tbody.innerHTML = '';
+
+    data.users.forEach(user => {
+      const isBlocked = user.isBlocked;
+      const statusText = isBlocked ? '<span style="color:#dc3545; font-weight:bold;">Blocked</span>' : '<span style="color:#28a745; font-weight:bold;">Active</span>';
+      
+      const adminActions = user.role === 'admin' ? '<span style="color:#888;">No actions</span>' : `
+        <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser(${user.id})">
+          ${isBlocked ? 'Unblock' : 'Block'}
+        </button>
+        <button class="action-btn btn-secondary" onclick="editUserRoom(${user.id}, '${user.assignedRoom}')">
+          ប្តូរបន្ទប់
+        </button>
+        <button class="action-btn" style="background:#17a2b8;" onclick="resetPassword(${user.id}, '${user.username}')">
+          Reset Pwd
+        </button>
+        <button class="action-btn btn-danger" onclick="deleteUser(${user.id}, '${user.username}')">
+          លុប
+        </button>
+      `;
+
+      tbody.innerHTML += `
+        <tr>
+          <td><strong>${user.username}</strong></td>
+          <td>${user.role}</td>
+          <td>${user.assignedRoom}</td>
+          <td>${statusText}</td>
+          <td>${adminActions}</td>
+        </tr>
+      `;
+    });
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+// Block / Unblock User
+async function toggleBlockUser(id) {
+  const res = await fetch(`/api/users/${id}/toggle-block`, { method: 'PUT' });
+  const data = await res.json();
+  alert(data.message);
+  loadUsersTable();
+}
+
+// Delete User
+async function deleteUser(id, username) {
+  if (!confirm(`តើអ្នកប្រាកដថាចង់លុប User "${username}" ទេ?`)) return;
+  const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+  const data = await res.json();
+  alert(data.message);
+  loadUsersTable();
+}
+
+// Reset Password
+async function resetPassword(id, username) {
+  const newPassword = prompt(`បញ្ចូលលេខសម្ងាត់ថ្មីសម្រាប់ ${username}:`);
+  if (!newPassword) return;
+
+  const res = await fetch(`/api/users/${id}/reset-password`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ newPassword })
+  });
+  const data = await res.json();
+  alert(data.message);
+}
+
+// Edit User Room
+async function editUserRoom(id, currentRoom) {
+  const newRoom = prompt(`បញ្ចូលបន្ទប់ថ្មី (បន្ទប់បច្ចុប្បន្ន: ${currentRoom}):\nជម្រើសបន្ទប់ដែលមាន: ${allRoomsList.join(', ')}`);
+  if (!newRoom) return;
+
+  const res = await fetch(`/api/users/${id}/edit-room`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ newRoom })
+  });
+  const data = await res.json();
+  alert(data.message);
+  loadUsersTable();
 }
 
 function createDummyMediaStream() {
@@ -95,13 +185,10 @@ function createDummyMediaStream() {
 }
 
 function getCurrentActiveStream() {
-  if (isScreenSharing && screenStream) {
-    return screenStream;
-  }
-  return localStream;
+  return (isScreenSharing && screenStream) ? screenStream : localStream;
 }
 
-// មុខងារ Login
+// Login
 async function login() {
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value.trim();
@@ -129,6 +216,7 @@ async function login() {
       document.getElementById('auth').classList.add('hidden');
       document.getElementById('admin-dashboard').classList.remove('hidden');
       loadAdminRoomMonitor();
+      loadUsersTable();
     } else {
       startMeeting();
     }
@@ -137,7 +225,6 @@ async function login() {
   }
 }
 
-// មុខងារសម្រាប់ Admin ចុចចូលបន្ទប់ជាក់លាក់
 function adminJoinRoom(roomId) {
   currentRoomId = roomId;
   document.getElementById('admin-dashboard').classList.add('hidden');
@@ -165,6 +252,7 @@ async function createNewUser() {
   if (data.success) {
     document.getElementById('newUsername').value = '';
     document.getElementById('newPassword').value = '';
+    loadUsersTable();
   }
 }
 
@@ -182,7 +270,10 @@ async function createNewRoom() {
   if (data.success) {
     document.getElementById('newRoomId').value = '';
     await loadRooms();
-    if (currentUserRole === 'admin') loadAdminRoomMonitor();
+    if (currentUserRole === 'admin') {
+      loadAdminRoomMonitor();
+      loadUsersTable();
+    }
   }
 }
 
@@ -264,7 +355,6 @@ async function startMeeting() {
 
 function connectToUser(peerId) {
   if (peerConnections[peerId]) return;
-
   const streamToSend = getCurrentActiveStream();
 
   try {
@@ -301,7 +391,6 @@ function handleIncomingCall(call) {
 
   peerConnections[peerId] = call;
   updateConnectionStatus(peerId, '⏳ Connecting...');
-
   const streamToSend = getCurrentActiveStream();
 
   try {
@@ -395,7 +484,6 @@ async function shareScreen() {
     screenShareIndicator.style.display = 'block';
 
     localVideo.srcObject = screenStream;
-
     const screenTrack = screenStream.getVideoTracks()[0];
 
     for (const [peerId, call] of Object.entries(peerConnections)) {
@@ -463,10 +551,10 @@ function leaveRoom() {
   socket.disconnect();
 
   if (currentUserRole === 'admin') {
-    // បើ Admin ចាកចេញពីបន្ទប់ ឱ្យត្រឡប់មកកាន់ផ្ទាំង Admin Dashboard វិញ
     document.getElementById('room-container').classList.add('hidden');
     document.getElementById('admin-dashboard').classList.remove('hidden');
     loadAdminRoomMonitor();
+    loadUsersTable();
   } else {
     location.reload();
   }
