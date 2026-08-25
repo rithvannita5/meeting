@@ -5,29 +5,26 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*" }
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
 io.on('connection', (socket) => {
-  socket.on('join-room', (roomId, userId) => {
+  socket.on('join-room', (roomId) => {
     socket.join(roomId);
-    // ប្រាប់អ្នកនៅក្នុងបន្ទប់ចាស់ថាមានអ្នកថ្មីចូលមក
-    socket.to(roomId).emit('user-connected', socket.id);
+    socket.to(roomId).emit('user-joined', socket.id);
+  });
 
-    // បញ្ជូនទិន្នន័យ Signaling រវាងអ្នកទាំងពីរ
-    socket.on('signal', (data) => {
-      socket.to(roomId).emit('signal', {
-        from: socket.id,
-        signal: data.signal
-      });
-    });
+  socket.on('signal', ({ to, signal }) => {
+    io.to(to).emit('signal', { from: socket.id, signal });
+  });
 
-    socket.on('disconnect', () => {
-      socket.to(roomId).emit('user-disconnected', socket.id);
-    });
+  socket.on('disconnecting', () => {
+    for (const room of socket.rooms) {
+      if (room !== socket.id) {
+        socket.to(room).emit('user-left');
+      }
+    }
   });
 });
 
