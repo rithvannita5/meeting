@@ -1,7 +1,7 @@
 const socket = io();
 let localStream = new MediaStream();
 let screenStream = null;
-let peerConnection;
+let peerConnection = null;
 let currentRoomId = '';
 
 const config = {
@@ -14,14 +14,11 @@ const config = {
 const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
 
-// មុខងារចុចលើ Video ដើម្បីពង្រីកធំ (Fullscreen)
 function makeFullscreen(videoElem) {
   if (videoElem.requestFullscreen) {
     videoElem.requestFullscreen();
   } else if (videoElem.webkitRequestFullscreen) {
     videoElem.webkitRequestFullscreen();
-  } else if (videoElem.msRequestFullscreen) {
-    videoElem.msRequestFullscreen();
   }
 }
 
@@ -39,7 +36,7 @@ async function login() {
     const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     localStream = audioStream;
   } catch (err) {
-    console.log('ចូលបន្ទប់ដោយគ្មាន Mic');
+    console.log('ចូលបន្ទប់ដោយគ្មាន Microphone');
     localStream = new MediaStream();
   }
 
@@ -47,21 +44,19 @@ async function login() {
   document.getElementById('room-container').classList.remove('hidden');
   document.getElementById('welcome-text').innerText = `អ្នកប្រើប្រាស់: ${username} | បន្ទប់: ${roomId}`;
 
-  initPeerConnection();
+  createPeerConnection();
   socket.emit('join-room', roomId, socket.id);
 }
 
-function initPeerConnection() {
+function createPeerConnection() {
   peerConnection = new RTCPeerConnection(config);
 
-  // បន្ថែម Track ទាំងអស់ដែលមានទៅកាន់ Connection
   localStream.getTracks().forEach(track => {
     peerConnection.addTrack(track, localStream);
   });
 
-  // ទទួលយក Video/Audio ពីដៃគូ
   peerConnection.ontrack = (event) => {
-    if (remoteVideo.srcObject !== event.streams[0]) {
+    if (event.streams && event.streams[0]) {
       remoteVideo.srcObject = event.streams[0];
     }
   };
@@ -72,9 +67,11 @@ function initPeerConnection() {
     }
   };
 
-  // នៅពេលអ្នកថ្មីចូលបន្ទប់ បង្កើត Offer ផ្ញើទៅកាន់គេ
+  // អ្នកចាស់នៅក្នុងបន្ទប់ នឹងផ្ញើ Offer ទៅកាន់អ្នកទើបចូលថ្មី
   socket.on('user-connected', async () => {
-    await sendOffer();
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    socket.emit('signal', { to: currentRoomId, signal: { sdp: offer } });
   });
 
   socket.on('signal', async (data) => {
@@ -90,22 +87,15 @@ function initPeerConnection() {
         await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
       }
     } catch (e) {
-      console.error('Signal Error:', e);
+      console.error('Error handling signal:', e);
     }
+  });
+
+  socket.on('user-disconnected', () => {
+    remoteVideo.srcObject = null;
   });
 }
 
-async function sendOffer() {
-  try {
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    socket.emit('signal', { to: currentRoomId, signal: { sdp: offer } });
-  } catch (err) {
-    console.error('Error sending offer:', err);
-  }
-}
-
-// មុខងារ Share Screen
 async function shareScreen() {
   try {
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
@@ -113,7 +103,6 @@ async function shareScreen() {
 
     localVideo.srcObject = screenStream;
 
-    // រកមើល Sender ដែលមានស្រាប់ ឬ Add track ថ្មី
     const senders = peerConnection.getSenders();
     const videoSender = senders.find(s => s.track && s.track.kind === 'video');
 
@@ -121,17 +110,20 @@ async function shareScreen() {
       videoSender.replaceTrack(screenTrack);
     } else {
       peerConnection.addTrack(screenTrack, screenStream);
-      // ត្រូវ Renegotiate ផ្ញើ Offer ថ្មីភ្លាមៗ
-      await sendOffer();
+      // បង្កើត renegotiation offer ពេលបន្ថែមអេក្រង់
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      socket.emit('signal', { to: currentRoomId, signal: { sdp: offer } });
     }
 
-    // នៅពេលចុច Stop Sharing
     screenTrack.onended = async () => {
       localVideo.srcObject = null;
       if (videoSender) {
         peerConnection.removeTrack(videoSender);
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.emit('signal', { to: currentRoomId, signal: { sdp: offer } });
       }
-      await sendOffer();
     };
   } catch (err) {
     console.error('Error sharing screen: ', err);
