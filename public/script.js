@@ -19,6 +19,28 @@ function makeFullscreen(elem) {
 
 localVideo.onclick = () => makeFullscreen(localVideo);
 
+// បង្កើត Dummy Video (ផ្ទាំងខ្មៅ) និង Silent Audio Stream ប្រសិនបើគ្មាន Camera/Mic
+function createDummyMediaStream() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 480;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  const videoStream = canvas.captureStream(10);
+  const videoTrack = videoStream.getVideoTracks()[0];
+
+  const audioCtx = new AudioContext();
+  const osc = audioCtx.createOscillator();
+  const dst = osc.connect(audioCtx.createMediaStreamDestination());
+  osc.start();
+  const audioTrack = dst.stream.getAudioTracks()[0];
+  audioTrack.enabled = false;
+
+  return new MediaStream([videoTrack, audioTrack]);
+}
+
 async function login() {
   const username = document.getElementById('username').value.trim();
   const roomId = document.getElementById('roomInput').value.trim();
@@ -33,14 +55,13 @@ async function login() {
       video: true 
     });
   } catch (err) {
-    console.log('មិនមាន Camera/Mic:', err);
+    console.log('មិនមាន Camera/Mic ពេញលេញ:', err);
     try {
-      localStream = await navigator.mediaDevices.getUserMedia({ 
-        audio: true, 
-        video: false 
-      });
+      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const dummy = createDummyMediaStream();
+      localStream = new MediaStream([audioStream.getAudioTracks()[0], dummy.getVideoTracks()[0]]);
     } catch {
-      localStream = createEmptyAudioStream();
+      localStream = createDummyMediaStream();
     }
   }
 
@@ -66,7 +87,7 @@ async function login() {
         }
       ]
     },
-    debug: 2
+    debug: 1
   });
 
   myPeer.on('open', (id) => {
@@ -89,12 +110,8 @@ async function login() {
     console.error('❌ PeerJS Error:', err);
   });
 
-  // ============================================================
-  // **Socket Events**
-  // ============================================================
-
+  // Socket Events
   socket.on('all-users', (users) => {
-    console.log('📋 All users in room:', users);
     users.forEach(user => {
       if (user.peerId !== myId) {
         addRemoteVideo(user.peerId, user.username);
@@ -105,7 +122,6 @@ async function login() {
   });
 
   socket.on('user-joined', ({ peerId, username }) => {
-    console.log(`👤 ${username} (${peerId}) joined the room`);
     if (peerId !== myId) {
       addRemoteVideo(peerId, username);
       setTimeout(() => connectToUser(peerId), 500);
@@ -114,7 +130,6 @@ async function login() {
   });
 
   socket.on('user-left', (peerId) => {
-    console.log(`👤 User ${peerId} left the room`);
     removeRemoteVideo(peerId);
     if (peerConnections[peerId]) {
       peerConnections[peerId].close();
@@ -122,32 +137,10 @@ async function login() {
     }
     updateUserCount();
   });
-
-  socket.on('connect', () => {
-    console.log('✅ Socket connected');
-  });
-
-  socket.on('disconnect', () => {
-    console.log('❌ Socket disconnected');
-  });
 }
 
-// ============================================================
-// **គ្រប់គ្រងការភ្ជាប់**
-// ============================================================
-
 function connectToUser(peerId) {
-  console.log('🔗 Attempting to connect to:', peerId);
-  
-  if (!localStream) {
-    console.error('❌ No local stream available');
-    return;
-  }
-
-  if (peerConnections[peerId]) {
-    console.log('Already connected to:', peerId);
-    return;
-  }
+  if (peerConnections[peerId]) return;
 
   try {
     const call = myPeer.call(peerId, localStream);
@@ -155,7 +148,6 @@ function connectToUser(peerId) {
     updateConnectionStatus(peerId, '⏳ Connecting...');
 
     call.on('stream', (remoteStream) => {
-      console.log('📺 Received stream from:', peerId);
       const videoElement = document.getElementById(`video-${peerId}`);
       if (videoElement) {
         videoElement.srcObject = remoteStream;
@@ -164,36 +156,23 @@ function connectToUser(peerId) {
     });
 
     call.on('close', () => {
-      console.log('🔌 Call closed with:', peerId);
       delete peerConnections[peerId];
-      const videoElement = document.getElementById(`video-${peerId}`);
-      if (videoElement) {
-        videoElement.srcObject = null;
-      }
       updateConnectionStatus(peerId, '🔴 Offline');
     });
 
-    call.on('error', (err) => {
-      console.error('❌ Call error with', peerId, ':', err);
+    call.on('error', () => {
       delete peerConnections[peerId];
       updateConnectionStatus(peerId, '🔴 Offline');
     });
 
   } catch (err) {
     console.error('❌ Error calling peer:', err);
-    delete peerConnections[peerId];
-    updateConnectionStatus(peerId, '🔴 Offline');
   }
 }
 
 function handleIncomingCall(call) {
   const peerId = call.peer;
-  console.log('📞 Incoming call from:', peerId);
-  
-  if (peerConnections[peerId]) {
-    console.log('Already connected to this peer');
-    return;
-  }
+  if (peerConnections[peerId]) return;
 
   peerConnections[peerId] = call;
   updateConnectionStatus(peerId, '⏳ Connecting...');
@@ -202,7 +181,6 @@ function handleIncomingCall(call) {
     call.answer(localStream);
 
     call.on('stream', (remoteStream) => {
-      console.log('📺 Received stream from:', peerId);
       const videoElement = document.getElementById(`video-${peerId}`);
       if (videoElement) {
         videoElement.srcObject = remoteStream;
@@ -211,25 +189,17 @@ function handleIncomingCall(call) {
     });
 
     call.on('close', () => {
-      console.log('🔌 Call closed with:', peerId);
       delete peerConnections[peerId];
-      const videoElement = document.getElementById(`video-${peerId}`);
-      if (videoElement) {
-        videoElement.srcObject = null;
-      }
       updateConnectionStatus(peerId, '🔴 Offline');
     });
 
-    call.on('error', (err) => {
-      console.error('❌ Call error with', peerId, ':', err);
+    call.on('error', () => {
       delete peerConnections[peerId];
       updateConnectionStatus(peerId, '🔴 Offline');
     });
 
   } catch (err) {
     console.error('❌ Error answering call:', err);
-    delete peerConnections[peerId];
-    updateConnectionStatus(peerId, '🔴 Offline');
   }
 }
 
@@ -247,19 +217,12 @@ function updateConnectionStatus(peerId, status) {
   }
 }
 
-// ============================================================
-// **គ្រប់គ្រង Video Elements**
-// ============================================================
-
 function addRemoteVideo(peerId, username) {
-  if (document.getElementById(`video-container-${peerId}`)) {
-    return;
-  }
+  if (document.getElementById(`video-container-${peerId}`)) return;
 
   const container = document.createElement('div');
   container.className = 'video-box';
   container.id = `video-container-${peerId}`;
-  container.dataset.peerId = peerId;
   
   container.innerHTML = `
     <p><strong>👤 ${username}</strong> 
@@ -278,35 +241,16 @@ function addRemoteVideo(peerId, username) {
 
 function removeRemoteVideo(peerId) {
   const container = document.getElementById(`video-container-${peerId}`);
-  if (container) {
-    container.remove();
-  }
+  if (container) container.remove();
 }
 
 function updateUserCount() {
   const count = Object.keys(peerConnections).length + 1;
-  document.getElementById('welcome-text').innerHTML = 
+  document.getElementById('welcome-text').innerText = 
     `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId} | អ្នកប្រើ: ${count}`;
 }
 
-// ============================================================
-// **មុខងារ Create Stream**
-// ============================================================
-
-function createEmptyAudioStream() {
-  const ctx = new AudioContext();
-  const osc = ctx.createOscillator();
-  const dst = osc.connect(ctx.createMediaStreamDestination());
-  osc.start();
-  const track = dst.stream.getAudioTracks()[0];
-  track.enabled = false;
-  return new MediaStream([track]);
-}
-
-// ============================================================
-// **មុខងារ Share Screen**
-// ============================================================
-
+// មុខងារ Share Screen
 async function shareScreen() {
   try {
     if (isScreenSharing) {
@@ -315,80 +259,44 @@ async function shareScreen() {
     }
 
     screenStream = await navigator.mediaDevices.getDisplayMedia({ 
-      video: { 
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30 }
-      },
+      video: true,
       audio: true 
     });
 
     isScreenSharing = true;
     document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing';
     document.getElementById('screenBtn').classList.add('screen-share-active');
-    screenShareIndicator.textContent = '📺 អ្នកកំពុងចែករំលែកអេក្រង់';
     screenShareIndicator.style.display = 'block';
 
     localVideo.srcObject = screenStream;
 
-    console.log('📤 Sending screen to all users...');
-    
+    const screenTrack = screenStream.getVideoTracks()[0];
+
+    // ប្តូរ Track ទៅកាន់ដៃគូទាំងអស់
     for (const [peerId, call] of Object.entries(peerConnections)) {
-      try {
-        const pc = call.peerConnection;
-        if (!pc) continue;
+      const pc = call.peerConnection;
+      if (!pc) continue;
 
-        const senders = pc.getSenders();
-        const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-        
-        if (videoSender) {
-          await videoSender.replaceTrack(screenStream.getVideoTracks()[0]);
-          console.log('✅ Screen sent to:', peerId);
-        } else {
-          pc.addTrack(screenStream.getVideoTracks()[0], screenStream);
-          console.log('✅ Screen added to:', peerId);
-        }
-
-        const audioTrack = screenStream.getAudioTracks()[0];
-        if (audioTrack) {
-          const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
-          if (audioSender) {
-            await audioSender.replaceTrack(audioTrack);
-          }
-        }
-
-      } catch (err) {
-        console.error('❌ Error sending screen to', peerId, ':', err);
+      const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+      if (videoSender) {
+        await videoSender.replaceTrack(screenTrack);
       }
     }
 
-    screenStream.getVideoTracks()[0].onended = () => {
+    screenTrack.onended = () => {
       stopScreenShare();
     };
 
   } catch (err) {
     console.error('❌ Error sharing screen:', err);
-    alert('មិនអាចចែករំលែកអេក្រង់បានទេ: ' + err.message);
-    isScreenSharing = false;
-    screenStream = null;
-    document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
-    document.getElementById('screenBtn').classList.remove('screen-share-active');
-    screenShareIndicator.textContent = '';
-    screenShareIndicator.style.display = 'none';
+    stopScreenShare();
   }
 }
 
-// ============================================================
-// **បញ្ឈប់ Screen Share**
-// ============================================================
-
 async function stopScreenShare() {
-  console.log('🛑 Stopping screen share...');
-  
   isScreenSharing = false;
   document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
   document.getElementById('screenBtn').classList.remove('screen-share-active');
-  screenShareIndicator.textContent = '';
   screenShareIndicator.style.display = 'none';
 
   if (screenStream) {
@@ -398,29 +306,19 @@ async function stopScreenShare() {
 
   if (localStream) {
     localVideo.srcObject = localStream;
+    const localVideoTrack = localStream.getVideoTracks()[0];
 
     for (const [peerId, call] of Object.entries(peerConnections)) {
-      try {
-        const pc = call.peerConnection;
-        if (!pc) continue;
+      const pc = call.peerConnection;
+      if (!pc) continue;
 
-        const senders = pc.getSenders();
-        const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-        
-        if (videoSender && localStream.getVideoTracks().length > 0) {
-          await videoSender.replaceTrack(localStream.getVideoTracks()[0]);
-          console.log('✅ Returned to camera for:', peerId);
-        }
-      } catch (err) {
-        console.error('❌ Error returning to camera for', peerId, ':', err);
+      const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+      if (videoSender && localVideoTrack) {
+        await videoSender.replaceTrack(localVideoTrack);
       }
     }
   }
 }
-
-// ============================================================
-// **មុខងារផ្សេងទៀត**
-// ============================================================
 
 function toggleMic() {
   if (!localStream || localStream.getAudioTracks().length === 0) {
@@ -433,20 +331,10 @@ function toggleMic() {
 }
 
 function leaveRoom() {
-  if (isScreenSharing) {
-    stopScreenShare(); // មិនប្រើ await ព្រោះមិនមែន async
-  }
-  
-  for (const [peerId, call] of Object.entries(peerConnections)) {
-    call.close();
-  }
-  
-  if (myPeer) {
-    myPeer.destroy();
-  }
-  if (localStream) {
-    localStream.getTracks().forEach(track => track.stop());
-  }
+  if (isScreenSharing) stopScreenShare();
+  for (const [peerId, call] of Object.entries(peerConnections)) call.close();
+  if (myPeer) myPeer.destroy();
+  if (localStream) localStream.getTracks().forEach(track => track.stop());
   socket.disconnect();
   location.reload();
 }
