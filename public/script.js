@@ -5,9 +5,11 @@ let currentRoomId = '';
 let localStream = null;
 let currentCall = null;
 let isScreenSharing = false;
+let isConnected = false;
 
 const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
+const partnerStatus = document.getElementById('partnerStatus');
 
 function makeFullscreen(elem) {
   if (elem.requestFullscreen) elem.requestFullscreen();
@@ -25,56 +27,142 @@ async function login() {
   currentRoomId = roomId;
 
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    localStream = await navigator.mediaDevices.getUserMedia({ 
+      audio: true, 
+      video: true 
+    });
   } catch (err) {
-    console.log('ដំណើរការដោយគ្មាន Camera/Mic');
+    console.log('មិនមាន Camera/Mic:', err);
     try {
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStream = await navigator.mediaDevices.getUserMedia({ 
+        audio: true, 
+        video: false 
+      });
     } catch {
       localStream = createEmptyAudioStream();
     }
   }
 
-  // បង្ហាញ video ក្នុងស្រុក
-  localVideo.srcObject = localStream;
+  // បង្ហាញ local video
+  if (localStream) {
+    localVideo.srcObject = localStream;
+  }
 
-  // បង្កើត Peer Connection
-  myPeer = new Peer();
+  // **សំខាន់៖ បង្កើត Peer ជាមួយ STUN/TURN Server**
+  myPeer = new Peer({
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ]
+    }
+  });
 
   myPeer.on('open', (id) => {
     myId = id;
+    console.log('My Peer ID:', myId);
+    
     document.getElementById('auth').classList.add('hidden');
     document.getElementById('room-container').classList.remove('hidden');
     document.getElementById('welcome-text').innerText = `អ្នកប្រើប្រាស់: ${username} | បន្ទប់: ${roomId}`;
 
+    // ផ្ញើ Peer ID ទៅ Server
     socket.emit('join-room', roomId, id);
+    console.log(`Joined room ${roomId} with peer ID ${id}`);
   });
 
-  // ពេលមានគេហៅមក (Incoming Call)
+  // **សំខាន់៖ ពេលមានគេហៅមក (Incoming Call)**
   myPeer.on('call', (call) => {
+    console.log('Incoming call from:', call.peer);
     currentCall = call;
     call.answer(localStream);
     call.on('stream', (remoteStream) => {
+      console.log('Received remote stream');
       remoteVideo.srcObject = remoteStream;
+      updatePartnerStatus(true);
+    });
+    call.on('close', () => {
+      console.log('Call closed');
+      remoteVideo.srcObject = null;
+      updatePartnerStatus(false);
     });
   });
 
-  // ពេលមានដៃគូថ្មីចូលបន្ទប់
-  socket.on('user-connected', (peerId) => {
-    connectToNewUser(peerId, localStream);
+  myPeer.on('error', (err) => {
+    console.error('PeerJS Error:', err);
+    alert('កំហុស PeerJS: ' + err.message);
   });
 
-  socket.on('user-disconnected', () => {
+  // **សំខាន់៖ ពេលមានដៃគូថ្មីចូលបន្ទប់**
+  socket.on('user-connected', (peerId) => {
+    console.log('User connected:', peerId);
+    if (peerId !== myId) {
+      connectToNewUser(peerId, localStream);
+    }
+  });
+
+  socket.on('user-disconnected', (peerId) => {
+    console.log('User disconnected:', peerId);
     remoteVideo.srcObject = null;
     currentCall = null;
+    updatePartnerStatus(false);
+  });
+
+  // **សំខាន់៖ ពេលភ្ជាប់ Socket រួច**
+  socket.on('connect', () => {
+    console.log('Socket connected');
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Socket disconnected');
+    updatePartnerStatus(false);
   });
 }
 
 function connectToNewUser(peerId, stream) {
+  console.log('Connecting to new user:', peerId);
+  
+  if (!stream) {
+    console.error('No stream available');
+    return;
+  }
+
+  // **ពិនិត្យមើលថាតើមាន call រួចហើយឬនៅ**
+  if (currentCall) {
+    console.log('Already have a call, closing old one');
+    currentCall.close();
+    currentCall = null;
+  }
+
   const call = myPeer.call(peerId, stream);
   currentCall = call;
+  
   call.on('stream', (remoteStream) => {
+    console.log('Received remote stream from:', peerId);
     remoteVideo.srcObject = remoteStream;
+    updatePartnerStatus(true);
+  });
+
+  call.on('close', () => {
+    console.log('Call with', peerId, 'closed');
+    remoteVideo.srcObject = null;
+    currentCall = null;
+    updatePartnerStatus(false);
+  });
+
+  call.on('error', (err) => {
+    console.error('Call error:', err);
+    alert('កំហុសការហៅ: ' + err.message);
   });
 }
 
@@ -88,71 +176,65 @@ function createEmptyAudioStream() {
   return new MediaStream([track]);
 }
 
-// មុខងារ Share Screen - កែតម្រូវ
+// **មុខងារ Share Screen - កែតម្រូវ**
 async function shareScreen() {
   try {
     if (isScreenSharing) {
-      // បើកំពុងចែករំលែកអេក្រង់រួច សូមបញ្ឈប់
       stopScreenShare();
       return;
     }
 
     const screenStream = await navigator.mediaDevices.getDisplayMedia({ 
       video: true, 
-      audio: false 
+      audio: true 
     });
 
     isScreenSharing = true;
-    
-    // បង្ហាញអេក្រង់នៅលើ local video
+    document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing';
+    document.getElementById('screenBtn').classList.add('screen-share-active');
+
+    // បង្ហាញអេក្រង់នៅ local
     localVideo.srcObject = screenStream;
 
-    // បញ្ជូន screen stream ទៅកាន់ដៃគូ
+    // **បញ្ជូន screen stream ទៅកាន់ដៃគូ**
     if (currentCall && currentCall.peerConnection) {
-      // យក video track ពី screen stream
       const screenTrack = screenStream.getVideoTracks()[0];
-      
-      // ស្វែងរក sender ដែលជា video
       const senders = currentCall.peerConnection.getSenders();
       const videoSender = senders.find(s => s.track && s.track.kind === 'video');
 
       if (videoSender) {
-        // ជំនួស track ចាស់ជាមួយ screen track
         await videoSender.replaceTrack(screenTrack);
       } else {
-        // ប្រសិនបើមិនមាន sender សូមបន្ថែម track ថ្មី
         currentCall.peerConnection.addTrack(screenTrack, screenStream);
       }
     } else {
-      // ប្រសិនបើគ្មាន call សូមបង្កើត call ថ្មី
+      // **ប្រសិនបើគ្មាន call សូមបង្កើត call ថ្មី**
+      console.log('No active call, waiting for connection');
       alert('សូមរង់ចាំដៃគូចូលបន្ទប់');
       isScreenSharing = false;
+      document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
+      document.getElementById('screenBtn').classList.remove('screen-share-active');
       return;
     }
 
-    // ពេលបញ្ឈប់ការចែករំលែកអេក្រង់
     screenStream.getVideoTracks()[0].onended = () => {
       stopScreenShare();
     };
 
-    // ប្ដូរអត្ថបទប៊ូតុង
-    document.querySelector('button[onclick="shareScreen()"]').innerText = 'Stop Sharing';
-
   } catch (err) {
     console.error('Error sharing screen:', err);
-    alert('មិនអាចចែករំលែកអេក្រង់បានទេ។ សូមពិនិត្យការអនុញ្ញាត។');
+    alert('មិនអាចចែករំលែកអេក្រង់បានទេ: ' + err.message);
   }
 }
 
-// បញ្ឈប់ការចែករំលែកអេក្រង់
 function stopScreenShare() {
   isScreenSharing = false;
-  
-  // ស្ដារ local stream ដើម
+  document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
+  document.getElementById('screenBtn').classList.remove('screen-share-active');
+
   if (localStream) {
     localVideo.srcObject = localStream;
     
-    // ស្ដារ track ដើមទៅកាន់ដៃគូ
     if (currentCall && currentCall.peerConnection) {
       const senders = currentCall.peerConnection.getSenders();
       const videoSender = senders.find(s => s.track && s.track.kind === 'video');
@@ -165,8 +247,6 @@ function stopScreenShare() {
       }
     }
   }
-  
-  document.querySelector('button[onclick="shareScreen()"]').innerText = 'Share Screen';
 }
 
 function toggleMic() {
@@ -175,7 +255,15 @@ function toggleMic() {
   }
   const audioTrack = localStream.getAudioTracks()[0];
   audioTrack.enabled = !audioTrack.enabled;
-  document.getElementById('micBtn').innerText = audioTrack.enabled ? 'បិទ មេក្រូ (Mute)' : 'បើក មេក្រូ (Unmute)';
+  document.getElementById('micBtn').innerHTML = audioTrack.enabled ? '🎤 បិទ/បើក មេក្រូ' : '🔇 បើក មេក្រូ';
+  document.getElementById('micBtn').style.background = audioTrack.enabled ? '#28a745' : '#dc3545';
+}
+
+function updatePartnerStatus(online) {
+  if (partnerStatus) {
+    partnerStatus.textContent = online ? 'Online' : 'Offline';
+    partnerStatus.className = `status-badge ${online ? 'status-online' : 'status-offline'}`;
+  }
 }
 
 function leaveRoom() {
@@ -189,8 +277,9 @@ function leaveRoom() {
   location.reload();
 }
 
-// ស្ដាប់ event ពី server សម្រាប់ refresh media
+// **ស្ដាប់ event refresh-media**
 socket.on('refresh-media', () => {
+  console.log('Refresh media requested');
   if (currentCall && currentCall.peerConnection) {
     // ធ្វើបច្ចុប្បន្នភាព connection
   }
