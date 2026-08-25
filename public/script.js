@@ -2,7 +2,8 @@ const socket = io();
 let localStream = new MediaStream();
 let screenStream = null;
 let peerConnection = null;
-let currentRoomId = '';
+let targetSocketId = null;
+let candidateQueue = [];
 
 const config = {
   iceServers: [
@@ -13,13 +14,12 @@ const config = {
 
 const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
+let remoteStream = new MediaStream();
+remoteVideo.srcObject = remoteStream;
 
-function makeFullscreen(videoElem) {
-  if (videoElem.requestFullscreen) {
-    videoElem.requestFullscreen();
-  } else if (videoElem.webkitRequestFullscreen) {
-    videoElem.webkitRequestFullscreen();
-  }
+function makeFullscreen(elem) {
+  if (elem.requestFullscreen) elem.requestFullscreen();
+  else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
 }
 
 localVideo.onclick = () => makeFullscreen(localVideo);
@@ -30,13 +30,10 @@ async function login() {
   const roomId = document.getElementById('roomInput').value.trim();
   if (!username || !roomId) return alert('សូមបំពេញឈ្មោះ និងលេខបន្ទប់!');
 
-  currentRoomId = roomId;
-
   try {
-    const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localStream = audioStream;
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   } catch (err) {
-    console.log('ចូលបន្ទប់ដោយគ្មាន Microphone');
+    console.log('ដំណើរការដោយគ្មាន Mic');
     localStream = new MediaStream();
   }
 
@@ -44,11 +41,12 @@ async function login() {
   document.getElementById('room-container').classList.remove('hidden');
   document.getElementById('welcome-text').innerText = `អ្នកប្រើប្រាស់: ${username} | បន្ទប់: ${roomId}`;
 
-  createPeerConnection();
-  socket.emit('join-room', roomId, socket.id);
+  socket.emit('join-room', roomId);
 }
 
 function createPeerConnection() {
+  if (peerConnection) return peerConnection;
+
   peerConnection = new RTCPeerConnection(config);
 
   localStream.getTracks().forEach(track => {
@@ -56,46 +54,69 @@ function createPeerConnection() {
   });
 
   peerConnection.ontrack = (event) => {
-    if (event.streams && event.streams[0]) {
-      remoteVideo.srcObject = event.streams[0];
-    }
+    event.streams[0].getTracks().forEach(track => {
+      remoteStream.addTrack(track);
+    });
+    remoteVideo.play().catch(e => console.log('Auto-play prompt:', e));
   };
 
   peerConnection.onicecandidate = (event) => {
-    if (event.candidate) {
-      socket.emit('signal', { to: currentRoomId, signal: { candidate: event.candidate } });
+    if (event.candidate && targetSocketId) {
+      socket.emit('signal', { to: targetSocketId, signal: { candidate: event.candidate } });
     }
   };
 
-  // អ្នកចាស់នៅក្នុងបន្ទប់ នឹងផ្ញើ Offer ទៅកាន់អ្នកទើបចូលថ្មី
-  socket.on('user-connected', async () => {
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    socket.emit('signal', { to: currentRoomId, signal: { sdp: offer } });
-  });
-
-  socket.on('signal', async (data) => {
-    try {
-      if (data.signal.sdp) {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
-        if (data.signal.sdp.type === 'offer') {
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
-          socket.emit('signal', { to: currentRoomId, signal: { sdp: answer } });
-        }
-      } else if (data.signal.candidate) {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
-      }
-    } catch (e) {
-      console.error('Error handling signal:', e);
-    }
-  });
-
-  socket.on('user-disconnected', () => {
-    remoteVideo.srcObject = null;
-  });
+  return peerConnection;
 }
 
+// ពេលមានដៃគូថ្មីចូលមក
+socket.on('user-joined', async (userId) => {
+  targetSocketId = userId;
+  const pc = createPeerConnection();
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  socket.emit('signal', { to: userId, signal: { sdp: offer } });
+});
+
+// ទទួលទិន្នន័យ Signal
+socket.on('signal', async ({ from, signal }) => {
+  targetSocketId = from;
+  const pc = createPeerConnection();
+
+  if (signal.sdp) {
+    await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+    
+    // បញ្ចូល candidate ដែលរង់ចាំ
+    while (candidateQueue.length > 0) {
+      await pc.addIceCandidate(candidateQueue.shift());
+    }
+
+    if (signal.sdp.type === 'offer') {
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('signal', { to: from, signal: { sdp: answer } });
+    }
+  } else if (signal.candidate) {
+    const candidate = new RTCIceCandidate(signal.candidate);
+    if (pc.remoteDescription && pc.remoteDescription.type) {
+      await pc.addIceCandidate(candidate);
+    } else {
+      candidateQueue.push(candidate);
+    }
+  }
+});
+
+socket.on('user-left', () => {
+  remoteStream.getTracks().forEach(track => track.stop());
+  remoteStream = new MediaStream();
+  remoteVideo.srcObject = remoteStream;
+  if (peerConnection) {
+    peerConnection.close();
+    peerConnection = null;
+  }
+});
+
+// ចែករំលែកអេក្រង់ (Share Screen)
 async function shareScreen() {
   try {
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
@@ -103,38 +124,35 @@ async function shareScreen() {
 
     localVideo.srcObject = screenStream;
 
-    const senders = peerConnection.getSenders();
+    const pc = createPeerConnection();
+    const senders = pc.getSenders();
     const videoSender = senders.find(s => s.track && s.track.kind === 'video');
 
     if (videoSender) {
       videoSender.replaceTrack(screenTrack);
     } else {
-      peerConnection.addTrack(screenTrack, screenStream);
-      // បង្កើត renegotiation offer ពេលបន្ថែមអេក្រង់
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      socket.emit('signal', { to: currentRoomId, signal: { sdp: offer } });
+      pc.addTrack(screenTrack, screenStream);
     }
 
-    screenTrack.onended = async () => {
+    // ផ្ញើ Offer ថ្មីដើម្បី Update អេក្រង់ទៅដៃគូ
+    if (targetSocketId) {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('signal', { to: targetSocketId, signal: { sdp: offer } });
+    }
+
+    screenTrack.onended = () => {
       localVideo.srcObject = null;
-      if (videoSender) {
-        peerConnection.removeTrack(videoSender);
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        socket.emit('signal', { to: currentRoomId, signal: { sdp: offer } });
-      }
+      if (videoSender) videoSender.replaceTrack(null);
     };
   } catch (err) {
-    console.error('Error sharing screen: ', err);
+    console.error('Error sharing screen:', err);
   }
 }
 
 function toggleMic() {
-  if (!localStream || localStream.getAudioTracks().length === 0) {
-    return alert('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!');
-  }
   const audioTrack = localStream.getAudioTracks()[0];
+  if (!audioTrack) return alert('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!');
   audioTrack.enabled = !audioTrack.enabled;
   document.getElementById('micBtn').innerText = audioTrack.enabled ? 'បិទ មេក្រូ (Mute)' : 'បើក មេក្រូ (Unmute)';
 }
