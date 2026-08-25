@@ -7,7 +7,7 @@
   <style>
     * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #18191a; color: white; padding: 20px; }
-    .card { background: #242526; padding: 30px; border-radius: 12px; box-shadow: 0 8px 20px rgba(0,0,0,0.5); width: 90%; max-width: 420px; text-align: center; margin-bottom: 20px; }
+    .card { background: #242526; padding: 30px; border-radius: 12px; box-shadow: 0 8px 20px rgba(0,0,0,0.5); width: 90%; max-width: 450px; text-align: center; margin-bottom: 20px; }
     input, select { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #3a3b3c; border-radius: 6px; background: #3a3b3c; color: white; font-size: 16px; }
     button { padding: 12px 24px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; margin: 5px; font-weight: bold; font-size: 15px; }
     button:hover { background: #0056b3; }
@@ -22,6 +22,8 @@
     .btn-warning { background: #ffc107; color: #000; }
     .screen-share-active { background: #ffc107 !important; color: #000 !important; }
     .admin-panel { border-top: 1px solid #444; margin-top: 15px; padding-top: 15px; }
+    .room-item { display: flex; justify-content: space-between; align-items: center; background: #3a3b3c; padding: 10px 15px; border-radius: 8px; margin-bottom: 8px; }
+    .badge-live { background: #28a745; padding: 3px 8px; border-radius: 12px; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -32,32 +34,40 @@
     <input type="text" id="username" placeholder="ឈ្មោះគណនី (Username)" required />
     <input type="password" id="password" placeholder="លេខសម្ងាត់ (Password)" required />
     
-    <label style="display:block; text-align:left; margin-top:10px; font-size:14px;">ជ្រើសរើសបន្ទប់ចង់ចូល៖</label>
+    <label style="display:block; text-align:left; margin-top:10px; font-size:14px;">ជ្រើសរើសបន្ទប់៖</label>
     <select id="roomSelect"></select>
     
     <button onclick="login()" style="width: 100%; margin-top: 15px;">ចូលរួមបន្ទប់</button>
   </div>
 
   <!-- Admin Dashboard Panel -->
-  <div id="admin-dashboard" class="card hidden" style="max-width: 500px;">
+  <div id="admin-dashboard" class="card hidden" style="max-width: 600px;">
     <h2>👑 Admin Control Panel</h2>
     
+    <!-- បញ្ជីបន្ទប់សកម្ម (Active Rooms) -->
+    <div class="admin-panel" style="text-align: left;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3>🔴 បន្ទប់កំពុងដំណើរការ (Live Rooms)</h3>
+        <button onclick="loadAdminRoomMonitor()" style="padding: 6px 12px; font-size: 13px;">🔄 Refresh</button>
+      </div>
+      <div id="activeRoomsList" style="margin-top: 10px;"></div>
+    </div>
+
     <div class="admin-panel">
       <h3>➕ បង្កើត User ថ្មី និងកំណត់បន្ទប់</h3>
       <input type="text" id="newUsername" placeholder="ឈ្មោះ User ថ្មី" />
       <input type="password" id="newPassword" placeholder="លេខសម្ងាត់ថ្មី" />
-      <label style="display:block; text-align:left; font-size:13px; margin-top:5px;">កំណត់បន្ទប់ដែលអនុញ្ញាតឱ្យចូល៖</label>
       <select id="userAssignedRoomSelect"></select>
-      <button onclick="createNewUser()" class="btn-success" style="width: 100%; margin-top:10px;">បង្កើត User</button>
+      <button onclick="createNewUser()" class="btn-success" style="width: 100%;">បង្កើត User</button>
     </div>
 
     <div class="admin-panel">
       <h3>➕ បង្កើត បន្ទប់ថ្មី (Room)</h3>
-      <input type="text" id="newRoomId" placeholder="ឈ្មោះបន្ទប់ថ្មី (ឧ. room-2)" />
+      <input type="text" id="newRoomId" placeholder="ឈ្មោះបន្ទប់ថ្មី (ឧ. room-3)" />
       <button onclick="createNewRoom()" class="btn-warning" style="width: 100%;">បង្កើតបន្ទប់</button>
     </div>
 
-    <button onclick="proceedToMeeting()" style="width: 100%; margin-top: 20px;">ចូលទៅកាន់ Meeting Room</button>
+    <button onclick="logoutAdmin()" class="btn-danger" style="width: 100%; margin-top: 20px;">ចាកចេញ (Logout)</button>
   </div>
 
   <!-- Room Container -->
@@ -67,7 +77,7 @@
     <div class="controls">
       <button id="micBtn" onclick="toggleMic()" class="btn-success">🎤 បិទ/បើក មេក្រូ</button>
       <button id="screenBtn" onclick="shareScreen()" class="btn-warning">🖥️ Share Screen</button>
-      <button onclick="leaveRoom()" class="btn-danger">🚪 ចាកចេញ</button>
+      <button onclick="leaveRoom()" class="btn-danger">🚪 ចាកចេញពីបន្ទប់</button>
     </div>
     <div class="video-grid">
       <div class="video-box">
