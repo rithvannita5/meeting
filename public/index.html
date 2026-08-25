@@ -87,7 +87,7 @@
     
     #room-container { 
       width: 95%; 
-      max-width: 1200px; 
+      max-width: 1400px; 
       text-align: center; 
     }
     
@@ -95,6 +95,16 @@
       color: #e4e6eb;
       margin-bottom: 15px;
       font-size: 18px;
+    }
+    
+    #screenShareIndicator {
+      background: #2d2e2f;
+      padding: 10px;
+      border-radius: 6px;
+      margin: 10px 0;
+      color: #ffc107;
+      font-weight: bold;
+      display: none;
     }
     
     .controls { 
@@ -109,21 +119,19 @@
       min-width: 120px;
     }
     
-    .video-container { 
-      display: flex; 
-      flex-wrap: wrap; 
-      justify-content: center; 
-      gap: 20px; 
-      margin-top: 15px; 
+    .video-grid { 
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 20px;
+      margin-top: 15px;
     }
     
     .video-box { 
-      flex: 1 1 450px; 
-      max-width: 580px; 
       background: #242526; 
       padding: 15px; 
       border-radius: 12px; 
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      min-height: 300px;
     }
     
     .video-box p {
@@ -134,7 +142,7 @@
     
     video { 
       width: 100%; 
-      height: 340px; 
+      height: 280px; 
       background: #000; 
       border-radius: 8px; 
       object-fit: contain; 
@@ -209,13 +217,12 @@
     }
     
     @media (max-width: 768px) {
-      .video-box {
-        flex: 1 1 100%;
-        max-width: 100%;
+      .video-grid {
+        grid-template-columns: 1fr;
       }
       
       video {
-        height: 250px;
+        height: 200px;
       }
       
       .controls button {
@@ -239,9 +246,9 @@
   <!-- Room Container -->
   <div id="room-container" class="hidden">
     <h3 id="welcome-text"></h3>
-    <div id="screenShareIndicator" style="display: none; background: #2d2e2f; padding: 10px; border-radius: 6px; margin: 10px 0; color: #ffc107; font-weight: bold;">
-  📺 កំពុងចែករំលែកអេក្រង់
-</div>
+    
+    <div id="screenShareIndicator">📺 កំពុងចែករំលែកអេក្រង់</div>
+    
     <div class="controls">
       <button id="micBtn" onclick="toggleMic()" class="btn-success">🎤 បិទ/បើក មេក្រូ</button>
       <button id="screenBtn" onclick="shareScreen()" class="btn-warning">🖥️ Share Screen</button>
@@ -252,14 +259,17 @@
       💡 គន្លឹះ៖ ចុចលើផ្ទាំងវីដេអូ ដើម្បីពង្រីកពេញអេក្រង់ (Full Screen)
     </div>
     
-    <div class="video-container">
+    <!-- Video Grid -->
+    <div class="video-grid">
+      <!-- Local Video -->
       <div class="video-box">
-        <p><strong>📹 អេក្រង់របស់អ្នក (You)</strong></p>
+        <p><strong>📹 អ្នក (You)</strong></p>
         <video id="localVideo" autoplay playsinline muted></video>
       </div>
-      <div class="video-box">
-        <p><strong>👤 អេក្រង់ដៃគូ (Partner)</strong> <span id="partnerStatus" class="status-badge status-offline">Offline</span></p>
-        <video id="remoteVideo" autoplay playsinline></video>
+      
+      <!-- Remote Videos -->
+      <div id="remoteVideos" class="video-grid" style="grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px;">
+        <!-- Remote videos will be added here dynamically -->
       </div>
     </div>
   </div>
