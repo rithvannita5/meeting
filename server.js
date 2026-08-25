@@ -14,17 +14,19 @@ app.use(express.static(path.join(__dirname, 'public')));
 io.on('connection', (socket) => {
   socket.on('join-room', (roomId, userId) => {
     socket.join(roomId);
-    socket.to(roomId).emit('user-connected', userId);
+    // ប្រាប់អ្នកនៅក្នុងបន្ទប់ចាស់ថាមានអ្នកថ្មីចូលមក
+    socket.to(roomId).emit('user-connected', socket.id);
 
+    // បញ្ជូនទិន្នន័យ Signaling រវាងអ្នកទាំងពីរ
     socket.on('signal', (data) => {
-      io.to(data.to).emit('signal', {
+      socket.to(roomId).emit('signal', {
         from: socket.id,
         signal: data.signal
       });
     });
 
     socket.on('disconnect', () => {
-      socket.to(roomId).emit('user-disconnected', userId);
+      socket.to(roomId).emit('user-disconnected', socket.id);
     });
   });
 });
