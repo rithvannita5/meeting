@@ -63,3 +63,9 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
 });
+
+// **បន្ថែម Signal Handling**
+socket.on('signal', (data) => {
+  console.log(`📡 Signal from ${data.peerId} in room ${data.roomId}`);
+  socket.to(data.roomId).emit('signal', data);
+});
