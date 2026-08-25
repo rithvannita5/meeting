@@ -235,6 +235,7 @@ function logoutAdmin() {
   location.reload();
 }
 
+// Admin បង្កើត User ថ្មី
 async function createNewUser() {
   const username = document.getElementById('newUsername').value.trim();
   const password = document.getElementById('newPassword').value.trim();
@@ -242,17 +243,26 @@ async function createNewUser() {
 
   if (!username || !password) return alert('សូមបំពេញព័ត៌មាន!');
 
-  const res = await fetch('/api/create-user', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, assignedRoom })
-  });
-  const data = await res.json();
-  alert(data.message);
-  if (data.success) {
-    document.getElementById('newUsername').value = '';
-    document.getElementById('newPassword').value = '';
-    loadUsersTable();
+  try {
+    const res = await fetch('/api/create-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, assignedRoom })
+    });
+    const data = await res.json();
+    alert(data.message);
+
+    if (data.success) {
+      // សម្អាតប្រអប់បញ្ចូល
+      document.getElementById('newUsername').value = '';
+      document.getElementById('newPassword').value = '';
+      
+      // ទាញយក និងបង្ហាញបញ្ជី User ថ្មីក្នុង Table ភ្លាមៗ
+      await loadUsersTable();
+    }
+  } catch (err) {
+    console.error('Error creating user:', err);
+    alert('មានបញ្ហាក្នុងការបង្កើត User!');
   }
 }
 
