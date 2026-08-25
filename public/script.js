@@ -6,7 +6,8 @@ let localStream = null;
 let currentCall = null;
 let isScreenSharing = false;
 let screenStream = null;
-let isCameraActive = true; // តាមដានថាកំពុងប្រើកាមេរ៉ា ឬ screen
+let screenTrack = null; // រក្សាទុក screen track ដាច់ដោយឡែក
+let cameraTrack = null; // រក្សាទុក camera track ដាច់ដោយឡែក
 
 const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
@@ -42,6 +43,11 @@ async function login() {
     } catch {
       localStream = createEmptyAudioStream();
     }
+  }
+
+  // រក្សាទុក camera track
+  if (localStream && localStream.getVideoTracks().length > 0) {
+    cameraTrack = localStream.getVideoTracks()[0];
   }
 
   if (localStream) {
@@ -83,7 +89,6 @@ async function login() {
     console.log('Incoming call from:', call.peer);
     currentCall = call;
     
-    // **សំខាន់៖ ឆ្លើយតបជាមួយ localStream**
     call.answer(localStream);
     
     call.on('stream', (remoteStream) => {
@@ -174,19 +179,18 @@ function createEmptyAudioStream() {
   return new MediaStream([track]);
 }
 
-// **=====================================================================**
+// =====================================================================
 // **មុខងារ Share Screen - កែតម្រូវថ្មី**
-// **=====================================================================**
+// =====================================================================
 
 async function shareScreen() {
   try {
-    // បើកំពុង share រួច បិទ
     if (isScreenSharing) {
       stopScreenShare();
       return;
     }
 
-    // **1. ចាប់យក screen stream**
+    // ចាប់យក screen stream
     screenStream = await navigator.mediaDevices.getDisplayMedia({ 
       video: { 
         width: { ideal: 1280 },
@@ -197,23 +201,24 @@ async function shareScreen() {
     });
 
     isScreenSharing = true;
-    isCameraActive = false;
     document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing';
     document.getElementById('screenBtn').classList.add('screen-share-active');
 
-    // **2. បង្ហាញ screen នៅ local**
+    // បង្ហាញ screen នៅ local
     localVideo.srcObject = screenStream;
 
-    // **3. បញ្ជូន screen stream ទៅដៃគូ**
-    if (currentCall) {
-      await replaceStreamInCall(screenStream);
-    } else {
-      // បើគ្មាន call រង់ចាំដៃគូ
-      console.log('No active call, waiting for connection');
-      // រក្សាទុក screen stream ហើយរង់ចាំ
+    // **បញ្ជូន screen stream ទៅដៃគូ**
+    if (currentCall && currentCall.peerConnection) {
+      await replaceVideoTrack(screenStream.getVideoTracks()[0]);
+      
+      // ជំនួស audio track ប្រសិនបើមាន
+      const audioTrack = screenStream.getAudioTracks()[0];
+      if (audioTrack) {
+        await replaceAudioTrack(audioTrack);
+      }
     }
 
-    // **4. ពេលអ្នកប្រើបិទ screen share**
+    // ពេលអ្នកប្រើបិទ screen share
     screenStream.getVideoTracks()[0].onended = () => {
       stopScreenShare();
     };
@@ -221,107 +226,113 @@ async function shareScreen() {
   } catch (err) {
     console.error('Error sharing screen:', err);
     alert('មិនអាចចែករំលែកអេក្រង់បានទេ: ' + err.message);
-    // Reset state
     isScreenSharing = false;
-    isCameraActive = true;
     screenStream = null;
     document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
     document.getElementById('screenBtn').classList.remove('screen-share-active');
   }
 }
 
-// **មុខងារជំនួស stream ក្នុងការហៅ**
-async function replaceStreamInCall(newStream) {
+// **ជំនួស video track**
+async function replaceVideoTrack(newTrack) {
   if (!currentCall || !currentCall.peerConnection) {
-    console.error('No active call to replace stream');
+    console.error('No active call');
     return;
   }
 
   try {
     const senders = currentCall.peerConnection.getSenders();
+    const videoSender = senders.find(s => s.track && s.track.kind === 'video');
     
-    // **ជំនួស video track**
-    const videoTrack = newStream.getVideoTracks()[0];
-    if (videoTrack) {
-      const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-      if (videoSender) {
-        await videoSender.replaceTrack(videoTrack);
-        console.log('✅ Video track replaced successfully');
-      } else {
-        // បន្ថែម video track ថ្មី
-        currentCall.peerConnection.addTrack(videoTrack, newStream);
-        console.log('✅ Video track added');
-      }
-    }
-
-    // **ជំនួស audio track**
-    const audioTrack = newStream.getAudioTracks()[0];
-    if (audioTrack) {
-      const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
-      if (audioSender) {
-        await audioSender.replaceTrack(audioTrack);
-        console.log('✅ Audio track replaced successfully');
-      } else {
-        currentCall.peerConnection.addTrack(audioTrack, newStream);
-        console.log('✅ Audio track added');
-      }
+    if (videoSender) {
+      await videoSender.replaceTrack(newTrack);
+      console.log('✅ Video track replaced');
+    } else {
+      currentCall.peerConnection.addTrack(newTrack, screenStream);
+      console.log('✅ Video track added');
     }
 
     // **បង្ខំឱ្យ renegotiate**
-    await currentCall.peerConnection.createOffer().then(offer => {
-      return currentCall.peerConnection.setLocalDescription(offer);
-    }).then(() => {
-      // ផ្ញើ SDP ថ្មីទៅកាន់ដៃគូ
-      currentCall.peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          // PeerJS នឹងគ្រប់គ្រងការផ្ញើដោយស្វ័យប្រវត្តិ
-        }
-      };
-    });
-
-    console.log('✅ Stream replaced successfully');
+    await renegotiateConnection();
 
   } catch (err) {
-    console.error('Error replacing stream:', err);
+    console.error('Error replacing video track:', err);
     throw err;
   }
 }
 
-// **មុខងារបញ្ឈប់ Screen Share**
+// **ជំនួស audio track**
+async function replaceAudioTrack(newTrack) {
+  if (!currentCall || !currentCall.peerConnection) {
+    return;
+  }
+
+  try {
+    const senders = currentCall.peerConnection.getSenders();
+    const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+    
+    if (audioSender) {
+      await audioSender.replaceTrack(newTrack);
+      console.log('✅ Audio track replaced');
+    } else {
+      currentCall.peerConnection.addTrack(newTrack, screenStream);
+      console.log('✅ Audio track added');
+    }
+  } catch (err) {
+    console.error('Error replacing audio track:', err);
+  }
+}
+
+// **បង្ខំឱ្យ renegotiate connection**
+async function renegotiateConnection() {
+  if (!currentCall || !currentCall.peerConnection) {
+    return;
+  }
+
+  try {
+    const pc = currentCall.peerConnection;
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    
+    // PeerJS នឹងផ្ញើ SDP ទៅដៃគូដោយស្វ័យប្រវត្តិ
+    console.log('✅ Renegotiation complete');
+
+  } catch (err) {
+    console.error('Error renegotiating:', err);
+  }
+}
+
+// **បញ្ឈប់ Screen Share**
 function stopScreenShare() {
   console.log('Stopping screen share...');
   
   isScreenSharing = false;
-  isCameraActive = true;
   document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
   document.getElementById('screenBtn').classList.remove('screen-share-active');
 
-  // **1. បញ្ឈប់ screen stream**
+  // បញ្ឈប់ screen stream
   if (screenStream) {
-    screenStream.getTracks().forEach(track => {
-      track.stop();
-      console.log('Stopped track:', track.kind);
-    });
+    screenStream.getTracks().forEach(track => track.stop());
     screenStream = null;
   }
 
-  // **2. ត្រឡប់ទៅកាមេរ៉ាវិញ**
+  // ត្រឡប់ទៅកាមេរ៉ាវិញ
   if (localStream && currentCall) {
-    // បង្ហាញ local camera
     localVideo.srcObject = localStream;
     
-    // ជំនួស stream ក្នុងការហៅ
-    replaceStreamInCall(localStream).catch(err => {
-      console.error('Error returning to camera:', err);
-    });
-  } else if (localStream) {
-    localVideo.srcObject = localStream;
+    // ត្រឡប់ទៅ camera track
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (videoTrack) {
+      replaceVideoTrack(videoTrack).catch(err => {
+        console.error('Error returning to camera:', err);
+      });
+    }
   }
 }
 
-// **=====================================================================**
+// =====================================================================
 // **មុខងារផ្សេងទៀត**
-// **=====================================================================**
+// =====================================================================
 
 function toggleMic() {
   if (!localStream || localStream.getAudioTracks().length === 0) {
@@ -353,9 +364,6 @@ function leaveRoom() {
   }
   if (localStream) {
     localStream.getTracks().forEach(track => track.stop());
-  }
-  if (screenStream) {
-    screenStream.getTracks().forEach(track => track.stop());
   }
   socket.disconnect();
   location.reload();
