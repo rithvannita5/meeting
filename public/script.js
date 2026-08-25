@@ -63,29 +63,28 @@ async function login() {
   }
 
   // ======== បង្កើត PeerJS ========
-  myPeer = new Peer({
-    config: {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        }
-      ]
-    }
-  });
+  // ======== បង្កើត PeerJS (ប្រើ Server ផ្ទាល់ខ្លួន) ========
+myPeer = new Peer({
+  host: window.location.hostname,  // ប្រើ domain ដូចគ្នា
+  port: 9000,
+  path: '/myapp',
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
+    ]
+  }
+});
 
   // ======== PeerJS Events ========
   myPeer.on('open', (id) => {
