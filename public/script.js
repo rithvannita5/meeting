@@ -19,7 +19,7 @@ function makeFullscreen(elem) {
 
 localVideo.onclick = () => makeFullscreen(localVideo);
 
-// បង្កើត Dummy Video (ផ្ទាំងខ្មៅ) និង Silent Audio Stream ប្រសិនបើគ្មាន Camera/Mic
+// បង្កើត Dummy Media Stream ប្រសិនបើគ្មាន Camera/Mic
 function createDummyMediaStream() {
   const canvas = document.createElement('canvas');
   canvas.width = 640;
@@ -39,6 +39,14 @@ function createDummyMediaStream() {
   audioTrack.enabled = false;
 
   return new MediaStream([videoTrack, audioTrack]);
+}
+
+// ជ្រើសរើស Stream ណាដែលកំពុងដំណើរការ (បើកំពុង Share Screen យក ScreenStream)
+function getCurrentActiveStream() {
+  if (isScreenSharing && screenStream) {
+    return screenStream;
+  }
+  return localStream;
 }
 
 async function login() {
@@ -142,8 +150,10 @@ async function login() {
 function connectToUser(peerId) {
   if (peerConnections[peerId]) return;
 
+  const streamToSend = getCurrentActiveStream();
+
   try {
-    const call = myPeer.call(peerId, localStream);
+    const call = myPeer.call(peerId, streamToSend);
     peerConnections[peerId] = call;
     updateConnectionStatus(peerId, '⏳ Connecting...');
 
@@ -177,8 +187,10 @@ function handleIncomingCall(call) {
   peerConnections[peerId] = call;
   updateConnectionStatus(peerId, '⏳ Connecting...');
 
+  const streamToSend = getCurrentActiveStream();
+
   try {
-    call.answer(localStream);
+    call.answer(streamToSend);
 
     call.on('stream', (remoteStream) => {
       const videoElement = document.getElementById(`video-${peerId}`);
@@ -272,7 +284,7 @@ async function shareScreen() {
 
     const screenTrack = screenStream.getVideoTracks()[0];
 
-    // ប្តូរ Track ទៅកាន់ដៃគូទាំងអស់
+    // ប្តូរ Track ទៅកាន់ដៃគូទាំងអស់ដែលមានស្រាប់
     for (const [peerId, call] of Object.entries(peerConnections)) {
       const pc = call.peerConnection;
       if (!pc) continue;
