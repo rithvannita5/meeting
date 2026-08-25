@@ -62,16 +62,13 @@ async function login() {
     localVideo.srcObject = localStream;
   }
 
-  // ======== បង្កើត PeerJS ========
-  // ======== បង្កើត PeerJS (ប្រើ Server ផ្ទាល់ខ្លួន) ========
+ // ======== បង្កើត PeerJS (ប្រើ Cloud Server) ========
 myPeer = new Peer({
-  host: window.location.hostname,  // ប្រើ domain ដូចគ្នា
-  port: 9000,
-  path: '/myapp',
   config: {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
       {
         urls: 'turn:openrelay.metered.ca:80',
         username: 'openrelayproject',
@@ -85,7 +82,6 @@ myPeer = new Peer({
     ]
   }
 });
-
   // ======== PeerJS Events ========
   myPeer.on('open', (id) => {
     myId = id;
