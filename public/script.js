@@ -20,22 +20,29 @@ function makeFullscreen(elem) {
 
 localVideo.onclick = () => makeFullscreen(localVideo);
 
-// ទាញយកបញ្ជីបន្ទប់ពេលបើក Web ដំបូង
-window.onload = async () => {
+// ផ្ទុកបញ្ជីបន្ទប់ចូលក្នុង Dropdown ទាំងអស់
+async function loadRooms() {
   try {
     const res = await fetch('/api/rooms');
     const data = await res.json();
+    
     const select = document.getElementById('roomSelect');
+    const adminSelect = document.getElementById('userAssignedRoomSelect');
+    
     select.innerHTML = '';
+    adminSelect.innerHTML = '';
+    
     data.rooms.forEach(r => {
       select.innerHTML += `<option value="${r}">${r}</option>`;
+      adminSelect.innerHTML += `<option value="${r}">${r}</option>`;
     });
   } catch (err) {
     console.error('Error fetching rooms:', err);
   }
-};
+}
 
-// បង្កើត Dummy Media Stream ប្រសិនបើគ្មាន Camera/Mic
+window.onload = loadRooms;
+
 function createDummyMediaStream() {
   const canvas = document.createElement('canvas');
   canvas.width = 640;
@@ -64,7 +71,7 @@ function getCurrentActiveStream() {
   return localStream;
 }
 
-// មុខងារ Login
+// មុខងារ Login ផ្ទៀងផ្ទាត់ជាមួយ Server
 async function login() {
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value.trim();
@@ -76,7 +83,7 @@ async function login() {
     const res = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify({ username, password, roomId })
     });
     const data = await res.json();
 
@@ -99,16 +106,18 @@ async function login() {
   }
 }
 
-// មុខងារ Admin បង្កើត User
+// Admin បង្កើត User ភ្ជាប់ជាមួយបន្ទប់ជាក់លាក់
 async function createNewUser() {
   const username = document.getElementById('newUsername').value.trim();
   const password = document.getElementById('newPassword').value.trim();
+  const assignedRoom = document.getElementById('userAssignedRoomSelect').value;
+
   if (!username || !password) return alert('សូមបំពេញព័ត៌មាន!');
 
   const res = await fetch('/api/create-user', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password })
+    body: JSON.stringify({ username, password, assignedRoom })
   });
   const data = await res.json();
   alert(data.message);
@@ -118,7 +127,7 @@ async function createNewUser() {
   }
 }
 
-// មុខងារ Admin បង្កើត Room
+// Admin បង្កើតបន្ទប់ថ្មី
 async function createNewRoom() {
   const roomId = document.getElementById('newRoomId').value.trim();
   if (!roomId) return alert('សូមបញ្ចូលឈ្មោះបន្ទប់!');
@@ -132,11 +141,7 @@ async function createNewRoom() {
   alert(data.message);
   if (data.success) {
     document.getElementById('newRoomId').value = '';
-    const select = document.getElementById('roomSelect');
-    select.innerHTML = '';
-    data.rooms.forEach(r => {
-      select.innerHTML += `<option value="${r}">${r}</option>`;
-    });
+    await loadRooms();
   }
 }
 
@@ -145,13 +150,9 @@ function proceedToMeeting() {
   startMeeting();
 }
 
-// ចាប់ផ្ដើមការប្រជុំ (Meeting)
 async function startMeeting() {
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ 
-      audio: true, 
-      video: true 
-    });
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
   } catch (err) {
     try {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -195,15 +196,8 @@ async function startMeeting() {
     socket.emit('join-room', currentRoomId, id, myUsername);
   });
 
-  myPeer.on('call', (call) => {
-    handleIncomingCall(call);
-  });
+  myPeer.on('call', (call) => handleIncomingCall(call));
 
-  myPeer.on('error', (err) => {
-    console.error('❌ PeerJS Error:', err);
-  });
-
-  // Socket Events
   socket.on('all-users', (users) => {
     users.forEach(user => {
       if (user.peerId !== myId) {
@@ -347,7 +341,6 @@ function updateUserCount() {
     `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId} | អ្នកប្រើ: ${count}`;
 }
 
-// មុខងារ Share Screen
 async function shareScreen() {
   try {
     if (isScreenSharing) {
@@ -369,7 +362,6 @@ async function shareScreen() {
 
     const screenTrack = screenStream.getVideoTracks()[0];
 
-    // ប្តូរ Track ទៅកាន់ដៃគូទាំងអស់
     for (const [peerId, call] of Object.entries(peerConnections)) {
       const pc = call.peerConnection;
       if (!pc) continue;
