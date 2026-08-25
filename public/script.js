@@ -21,6 +21,26 @@ function makeFullscreen(elem) {
 
 localVideo.onclick = () => makeFullscreen(localVideo);
 
+// ប្តូរ Tab លើ Admin Dashboard
+function switchAdminTab(tab) {
+  document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav-tabs button').forEach(el => el.classList.remove('active'));
+
+  if (tab === 'rooms') {
+    document.getElementById('tab-rooms').classList.add('active');
+    document.getElementById('tabBtnRooms').classList.add('active');
+    loadAdminRoomMonitor();
+  } else if (tab === 'users') {
+    document.getElementById('tab-users').classList.add('active');
+    document.getElementById('tabBtnUsers').classList.add('active');
+    loadUsersTable();
+  } else if (tab === 'newRoom') {
+    document.getElementById('tab-newRoom').classList.add('active');
+    document.getElementById('tabBtnNewRoom').classList.add('active');
+  }
+}
+
+// ផ្ទុកបញ្ជីបន្ទប់ចូលទៅក្នុង Dropdowns
 async function loadRooms() {
   try {
     const res = await fetch('/api/rooms');
@@ -30,12 +50,12 @@ async function loadRooms() {
     const select = document.getElementById('roomSelect');
     const adminSelect = document.getElementById('userAssignedRoomSelect');
     
-    select.innerHTML = '';
-    adminSelect.innerHTML = '';
+    if (select) select.innerHTML = '';
+    if (adminSelect) adminSelect.innerHTML = '';
     
     data.rooms.forEach(r => {
-      select.innerHTML += `<option value="${r}">${r}</option>`;
-      adminSelect.innerHTML += `<option value="${r}">${r}</option>`;
+      if (select) select.innerHTML += `<option value="${r}">${r}</option>`;
+      if (adminSelect) adminSelect.innerHTML += `<option value="${r}">${r}</option>`;
     });
   } catch (err) {
     console.error('Error fetching rooms:', err);
@@ -44,7 +64,7 @@ async function loadRooms() {
 
 window.onload = loadRooms;
 
-// ទាញយកបន្ទប់សកម្មសម្រាប់ Admin
+// បង្ហាញបន្ទប់សកម្មជា Card សម្រាប់ Admin
 async function loadAdminRoomMonitor() {
   try {
     const res = await fetch('/api/rooms-status');
@@ -54,28 +74,26 @@ async function loadAdminRoomMonitor() {
 
     data.rooms.forEach(room => {
       const isLive = room.userCount > 0;
-      const badge = isLive 
-        ? `<span class="badge-live">🟢 កំពុងសកម្ម (${room.userCount} នាក់: ${room.users.join(', ')})</span>`
-        : `<span style="color:#aaa; font-size:12px;">⚪ ទំនេរ</span>`;
+      const statusHtml = isLive 
+        ? `<span style="color:#28a745; font-weight:bold;">🟢 កំពុងសកម្ម (${room.userCount} នាក់)</span><br><small style="color:#bbb;">👤 ${room.users.join(', ')}</small>`
+        : `<span style="color:#888;">⚪ ទំនេរ (គ្មានមនុស្ស)</span>`;
 
       container.innerHTML += `
-        <div class="room-item">
-          <div>
-            <strong>បន្ទប់៖ ${room.roomId}</strong><br/>
-            ${badge}
-          </div>
-          <button onclick="adminJoinRoom('${room.roomId}')" style="padding: 6px 12px; font-size: 12px; background: #28a745;">
-            ចូលមើល (Join)
+        <div class="room-card ${isLive ? 'live' : ''}">
+          <h4 style="margin-bottom:6px;">បន្ទប់: ${room.roomId}</h4>
+          <p style="font-size:13px; margin-bottom:12px;">${statusHtml}</p>
+          <button onclick="adminJoinRoom('${room.roomId}')" class="btn-success" style="width:100%; font-size:13px;">
+            🚪 ចូលរួមបន្ទប់នេះ
           </button>
         </div>
       `;
     });
   } catch (err) {
-    console.error(err);
+    console.error('Error loading rooms:', err);
   }
 }
 
-// ផ្ទុកបញ្ជី User ទាំងអស់ចូលក្នុង Table
+// ផ្ទុកតារាង User ទាំងអស់
 async function loadUsersTable() {
   try {
     const res = await fetch('/api/users');
@@ -85,7 +103,9 @@ async function loadUsersTable() {
 
     data.users.forEach(user => {
       const isBlocked = user.isBlocked;
-      const statusText = isBlocked ? '<span style="color:#dc3545; font-weight:bold;">Blocked</span>' : '<span style="color:#28a745; font-weight:bold;">Active</span>';
+      const statusText = isBlocked 
+        ? '<span style="color:#dc3545; font-weight:bold;">Blocked</span>' 
+        : '<span style="color:#28a745; font-weight:bold;">Active</span>';
       
       const adminActions = user.role === 'admin' ? '<span style="color:#888;">No actions</span>' : `
         <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser(${user.id})">
@@ -94,7 +114,7 @@ async function loadUsersTable() {
         <button class="action-btn btn-secondary" onclick="editUserRoom(${user.id}, '${user.assignedRoom}')">
           ប្តូរបន្ទប់
         </button>
-        <button class="action-btn" style="background:#17a2b8;" onclick="resetPassword(${user.id}, '${user.username}')">
+        <button class="action-btn" style="background:#17a2b8; color:white;" onclick="resetPassword(${user.id}, '${user.username}')">
           Reset Pwd
         </button>
         <button class="action-btn btn-danger" onclick="deleteUser(${user.id}, '${user.username}')">
@@ -113,25 +133,33 @@ async function loadUsersTable() {
       `;
     });
   } catch (err) {
-    console.error(err);
+    console.error('Error loading user table:', err);
   }
 }
 
 // Block / Unblock User
 async function toggleBlockUser(id) {
-  const res = await fetch(`/api/users/${id}/toggle-block`, { method: 'PUT' });
-  const data = await res.json();
-  alert(data.message);
-  loadUsersTable();
+  try {
+    const res = await fetch(`/api/users/${id}/toggle-block`, { method: 'PUT' });
+    const data = await res.json();
+    alert(data.message);
+    await loadUsersTable();
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 // Delete User
 async function deleteUser(id, username) {
   if (!confirm(`តើអ្នកប្រាកដថាចង់លុប User "${username}" ទេ?`)) return;
-  const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
-  const data = await res.json();
-  alert(data.message);
-  loadUsersTable();
+  try {
+    const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    alert(data.message);
+    await loadUsersTable();
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 // Reset Password
@@ -139,13 +167,17 @@ async function resetPassword(id, username) {
   const newPassword = prompt(`បញ្ចូលលេខសម្ងាត់ថ្មីសម្រាប់ ${username}:`);
   if (!newPassword) return;
 
-  const res = await fetch(`/api/users/${id}/reset-password`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ newPassword })
-  });
-  const data = await res.json();
-  alert(data.message);
+  try {
+    const res = await fetch(`/api/users/${id}/reset-password`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newPassword })
+    });
+    const data = await res.json();
+    alert(data.message);
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 // Edit User Room
@@ -153,14 +185,18 @@ async function editUserRoom(id, currentRoom) {
   const newRoom = prompt(`បញ្ចូលបន្ទប់ថ្មី (បន្ទប់បច្ចុប្បន្ន: ${currentRoom}):\nជម្រើសបន្ទប់ដែលមាន: ${allRoomsList.join(', ')}`);
   if (!newRoom) return;
 
-  const res = await fetch(`/api/users/${id}/edit-room`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ newRoom })
-  });
-  const data = await res.json();
-  alert(data.message);
-  loadUsersTable();
+  try {
+    const res = await fetch(`/api/users/${id}/edit-room`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newRoom })
+    });
+    const data = await res.json();
+    alert(data.message);
+    await loadUsersTable();
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 function createDummyMediaStream() {
@@ -253,11 +289,8 @@ async function createNewUser() {
     alert(data.message);
 
     if (data.success) {
-      // សម្អាតប្រអប់បញ្ចូល
       document.getElementById('newUsername').value = '';
       document.getElementById('newPassword').value = '';
-      
-      // ទាញយក និងបង្ហាញបញ្ជី User ថ្មីក្នុង Table ភ្លាមៗ
       await loadUsersTable();
     }
   } catch (err) {
@@ -266,24 +299,30 @@ async function createNewUser() {
   }
 }
 
+// Admin បង្កើតបន្ទប់ថ្មី
 async function createNewRoom() {
   const roomId = document.getElementById('newRoomId').value.trim();
   if (!roomId) return alert('សូមបញ្ចូលឈ្មោះបន្ទប់!');
 
-  const res = await fetch('/api/create-room', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ roomId })
-  });
-  const data = await res.json();
-  alert(data.message);
-  if (data.success) {
-    document.getElementById('newRoomId').value = '';
-    await loadRooms();
-    if (currentUserRole === 'admin') {
-      loadAdminRoomMonitor();
-      loadUsersTable();
+  try {
+    const res = await fetch('/api/create-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId })
+    });
+    const data = await res.json();
+    alert(data.message);
+
+    if (data.success) {
+      document.getElementById('newRoomId').value = '';
+      await loadRooms();
+      if (currentUserRole === 'admin') {
+        loadAdminRoomMonitor();
+      }
     }
+  } catch (err) {
+    console.error('Error creating room:', err);
+    alert('មានបញ្ហាក្នុងការបង្កើតបន្ទប់!');
   }
 }
 
