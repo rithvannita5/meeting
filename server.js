@@ -10,21 +10,13 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.use(express.static(path.join(__dirname, 'public')));
 
 io.on('connection', (socket) => {
-  socket.on('join-room', (roomId) => {
+  socket.on('join-room', (roomId, peerId) => {
     socket.join(roomId);
-    socket.to(roomId).emit('user-joined', socket.id);
-  });
+    socket.to(roomId).emit('user-connected', peerId);
 
-  socket.on('signal', ({ to, signal }) => {
-    io.to(to).emit('signal', { from: socket.id, signal });
-  });
-
-  socket.on('disconnecting', () => {
-    for (const room of socket.rooms) {
-      if (room !== socket.id) {
-        socket.to(room).emit('user-left');
-      }
-    }
+    socket.on('disconnect', () => {
+      socket.to(roomId).emit('user-disconnected', peerId);
+    });
   });
 });
 
