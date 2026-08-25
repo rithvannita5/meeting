@@ -7,9 +7,9 @@
   <style>
     * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #18191a; color: white; padding: 20px; }
-    .card { background: #242526; padding: 30px; border-radius: 12px; box-shadow: 0 8px 20px rgba(0,0,0,0.5); width: 90%; max-width: 450px; text-align: center; margin-bottom: 20px; }
-    input, select { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #3a3b3c; border-radius: 6px; background: #3a3b3c; color: white; font-size: 16px; }
-    button { padding: 12px 24px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; margin: 5px; font-weight: bold; font-size: 15px; }
+    .card { background: #242526; padding: 25px; border-radius: 12px; box-shadow: 0 8px 20px rgba(0,0,0,0.5); width: 95%; max-width: 450px; text-align: center; margin-bottom: 20px; }
+    input, select { width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #3a3b3c; border-radius: 6px; background: #3a3b3c; color: white; font-size: 15px; }
+    button { padding: 10px 18px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; margin: 4px; font-weight: bold; font-size: 14px; }
     button:hover { background: #0056b3; }
     .hidden { display: none; }
     #room-container { width: 95%; max-width: 1400px; text-align: center; }
@@ -20,10 +20,17 @@
     .btn-danger { background: #dc3545; }
     .btn-success { background: #28a745; }
     .btn-warning { background: #ffc107; color: #000; }
+    .btn-secondary { background: #6c757d; }
     .screen-share-active { background: #ffc107 !important; color: #000 !important; }
     .admin-panel { border-top: 1px solid #444; margin-top: 15px; padding-top: 15px; }
     .room-item { display: flex; justify-content: space-between; align-items: center; background: #3a3b3c; padding: 10px 15px; border-radius: 8px; margin-bottom: 8px; }
     .badge-live { background: #28a745; padding: 3px 8px; border-radius: 12px; font-size: 12px; }
+    
+    /* Table Styling */
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: left; }
+    th, td { padding: 8px; border-bottom: 1px solid #444; }
+    th { background: #3a3b3c; }
+    .action-btn { padding: 4px 8px; font-size: 11px; margin: 2px; }
   </style>
 </head>
 <body>
@@ -41,27 +48,49 @@
   </div>
 
   <!-- Admin Dashboard Panel -->
-  <div id="admin-dashboard" class="card hidden" style="max-width: 600px;">
+  <div id="admin-dashboard" class="card hidden" style="max-width: 850px;">
     <h2>👑 Admin Control Panel</h2>
     
-    <!-- បញ្ជីបន្ទប់សកម្ម (Active Rooms) -->
+    <!-- បញ្ជីបន្ទប់សកម្ម -->
     <div class="admin-panel" style="text-align: left;">
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <h3>🔴 បន្ទប់កំពុងដំណើរការ (Live Rooms)</h3>
-        <button onclick="loadAdminRoomMonitor()" style="padding: 6px 12px; font-size: 13px;">🔄 Refresh</button>
+        <button onclick="loadAdminRoomMonitor()" style="padding: 4px 10px; font-size: 12px;">🔄 Refresh</button>
       </div>
-      <div id="activeRoomsList" style="margin-top: 10px;"></div>
+      <div id="activeRoomsList" style="margin-top: 8px;"></div>
     </div>
 
-    <div class="admin-panel">
-      <h3>➕ បង្កើត User ថ្មី និងកំណត់បន្ទប់</h3>
+    <!-- តារាងគ្រប់គ្រង User ទាំងអស់ -->
+    <div class="admin-panel" style="text-align: left; overflow-x: auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3>👥 គ្រប់គ្រងសមាជិក (User Management)</h3>
+        <button onclick="loadUsersTable()" style="padding: 4px 10px; font-size: 12px;">🔄 Refresh Users</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Role</th>
+            <th>បន្ទប់</th>
+            <th>ស្ថានភាព</th>
+            <th>សកម្មភាព</th>
+          </tr>
+        </thead>
+        <tbody id="userTableBody"></tbody>
+      </table>
+    </div>
+
+    <!-- បង្កើត User ថ្មី -->
+    <div class="admin-panel" style="text-align: left;">
+      <h3>➕ បង្កើត User ថ្មី</h3>
       <input type="text" id="newUsername" placeholder="ឈ្មោះ User ថ្មី" />
       <input type="password" id="newPassword" placeholder="លេខសម្ងាត់ថ្មី" />
       <select id="userAssignedRoomSelect"></select>
       <button onclick="createNewUser()" class="btn-success" style="width: 100%;">បង្កើត User</button>
     </div>
 
-    <div class="admin-panel">
+    <!-- បង្កើតបន្ទប់ថ្មី -->
+    <div class="admin-panel" style="text-align: left;">
       <h3>➕ បង្កើត បន្ទប់ថ្មី (Room)</h3>
       <input type="text" id="newRoomId" placeholder="ឈ្មោះបន្ទប់ថ្មី (ឧ. room-3)" />
       <button onclick="createNewRoom()" class="btn-warning" style="width: 100%;">បង្កើតបន្ទប់</button>
