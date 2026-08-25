@@ -23,7 +23,6 @@
 </head>
 <body>
 
-  <!-- Auth Box -->
   <div id="auth" class="card">
     <h2>ចូលរួមបន្ទប់ (Join Room)</h2>
     <input type="text" id="username" placeholder="ឈ្មោះរបស់អ្នក" required />
@@ -31,7 +30,6 @@
     <button onclick="login()">ចូលរួមបន្ទប់</button>
   </div>
 
-  <!-- Meeting Room Container -->
   <div id="room-container" class="hidden">
     <h3 id="welcome-text"></h3>
     <div class="controls">
@@ -52,6 +50,7 @@
     </div>
   </div>
 
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="script.js"></script>
 </body>
