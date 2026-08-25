@@ -32,27 +32,29 @@
     <input type="text" id="username" placeholder="ឈ្មោះគណនី (Username)" required />
     <input type="password" id="password" placeholder="លេខសម្ងាត់ (Password)" required />
     
-    <label style="display:block; text-align:left; margin-top:10px; font-size:14px;">ជ្រើសរើសបន្ទប់៖</label>
+    <label style="display:block; text-align:left; margin-top:10px; font-size:14px;">ជ្រើសរើសបន្ទប់ចង់ចូល៖</label>
     <select id="roomSelect"></select>
     
     <button onclick="login()" style="width: 100%; margin-top: 15px;">ចូលរួមបន្ទប់</button>
   </div>
 
   <!-- Admin Dashboard Panel -->
-  <div id="admin-dashboard" class="card hidden" style="max-width: 600px;">
+  <div id="admin-dashboard" class="card hidden" style="max-width: 500px;">
     <h2>👑 Admin Control Panel</h2>
     
     <div class="admin-panel">
-      <h3>➕ បង្កើត User ថ្មី</h3>
+      <h3>➕ បង្កើត User ថ្មី និងកំណត់បន្ទប់</h3>
       <input type="text" id="newUsername" placeholder="ឈ្មោះ User ថ្មី" />
       <input type="password" id="newPassword" placeholder="លេខសម្ងាត់ថ្មី" />
-      <button onclick="createNewUser()" class="btn-success">បង្កើត User</button>
+      <label style="display:block; text-align:left; font-size:13px; margin-top:5px;">កំណត់បន្ទប់ដែលអនុញ្ញាតឱ្យចូល៖</label>
+      <select id="userAssignedRoomSelect"></select>
+      <button onclick="createNewUser()" class="btn-success" style="width: 100%; margin-top:10px;">បង្កើត User</button>
     </div>
 
     <div class="admin-panel">
       <h3>➕ បង្កើត បន្ទប់ថ្មី (Room)</h3>
-      <input type="text" id="newRoomId" placeholder="ឈ្មោះ/លេខសម្គាល់បន្ទប់ថ្មី (ឧទាហរណ៍: room-2)" />
-      <button onclick="createNewRoom()" class="btn-warning">បង្កើតបន្ទប់</button>
+      <input type="text" id="newRoomId" placeholder="ឈ្មោះបន្ទប់ថ្មី (ឧ. room-2)" />
+      <button onclick="createNewRoom()" class="btn-warning" style="width: 100%;">បង្កើតបន្ទប់</button>
     </div>
 
     <button onclick="proceedToMeeting()" style="width: 100%; margin-top: 20px;">ចូលទៅកាន់ Meeting Room</button>
