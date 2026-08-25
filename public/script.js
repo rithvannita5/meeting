@@ -304,17 +304,16 @@ function createEmptyAudioStream() {
 }
 
 // ============================================================
-// **មុខងារ Share Screen - កែតម្រូវថ្មី**
+// **មុខងារ Share Screen**
 // ============================================================
 
 async function shareScreen() {
   try {
     if (isScreenSharing) {
-      stopScreenShare();
+      await stopScreenShare(); // បន្ថែម await
       return;
     }
 
-    // **1. ចាប់យក screen stream**
     screenStream = await navigator.mediaDevices.getDisplayMedia({ 
       video: { 
         width: { ideal: 1280 },
@@ -330,10 +329,8 @@ async function shareScreen() {
     screenShareIndicator.textContent = '📺 អ្នកកំពុងចែករំលែកអេក្រង់';
     screenShareIndicator.style.display = 'block';
 
-    // **2. បង្ហាញ screen នៅ local**
     localVideo.srcObject = screenStream;
 
-    // **3. បញ្ជូន screen ទៅអ្នកទាំងអស់**
     console.log('📤 Sending screen to all users...');
     
     for (const [peerId, call] of Object.entries(peerConnections)) {
@@ -344,21 +341,17 @@ async function shareScreen() {
           continue;
         }
 
-        // **រក sender វីដេអូ**
         const senders = pc.getSenders();
         const videoSender = senders.find(s => s.track && s.track.kind === 'video');
         
         if (videoSender) {
-          // **ជំនួស track**
           await videoSender.replaceTrack(screenStream.getVideoTracks()[0]);
           console.log('✅ Screen sent to:', peerId);
         } else {
-          // **បើគ្មាន sender បន្ថែមថ្មី**
           pc.addTrack(screenStream.getVideoTracks()[0], screenStream);
           console.log('✅ Screen added to:', peerId);
         }
 
-        // **បញ្ជូន audio ផងដែរ**
         const audioTrack = screenStream.getAudioTracks()[0];
         if (audioTrack) {
           const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
@@ -372,7 +365,6 @@ async function shareScreen() {
       }
     }
 
-    // **4. ពេលអ្នកប្រើបិទ screen share**
     screenStream.getVideoTracks()[0].onended = () => {
       stopScreenShare();
     };
@@ -390,10 +382,10 @@ async function shareScreen() {
 }
 
 // ============================================================
-// **បញ្ឈប់ Screen Share**
+// **បញ្ឈប់ Screen Share - ធ្វើជា async**
 // ============================================================
 
-function stopScreenShare() {
+async function stopScreenShare() {  // <-- បន្ថែម async
   console.log('🛑 Stopping screen share...');
   
   isScreenSharing = false;
@@ -402,13 +394,11 @@ function stopScreenShare() {
   screenShareIndicator.textContent = '';
   screenShareIndicator.style.display = 'none';
 
-  // **បញ្ឈប់ screen stream**
   if (screenStream) {
     screenStream.getTracks().forEach(track => track.stop());
     screenStream = null;
   }
 
-  // **ត្រឡប់ទៅកាមេរ៉ាវិញ**
   if (localStream) {
     localVideo.srcObject = localStream;
 
@@ -421,7 +411,7 @@ function stopScreenShare() {
         const videoSender = senders.find(s => s.track && s.track.kind === 'video');
         
         if (videoSender && localStream.getVideoTracks().length > 0) {
-          await videoSender.replaceTrack(localStream.getVideoTracks()[0]);
+          await videoSender.replaceTrack(localStream.getVideoTracks()[0]); // <-- await នៅទីនេះ
           console.log('✅ Returned to camera for:', peerId);
         }
       } catch (err) {
@@ -447,7 +437,7 @@ function toggleMic() {
 
 function leaveRoom() {
   if (isScreenSharing) {
-    stopScreenShare();
+    stopScreenShare(); // លុប await ចេញ ព្រោះមិនមែន async
   }
   
   for (const [peerId, call] of Object.entries(peerConnections)) {
