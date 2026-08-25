@@ -1,14 +1,13 @@
 {
-  "name": "webrtc-meeting",
+  "name": "video-chat-app",
   "version": "1.0.0",
-  "description": "Screen share and voice app",
+  "description": "Video chat with screen sharing",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "socket.io": "^4.7.5"
-  },
-  "license": "MIT"
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
+  }
 }
