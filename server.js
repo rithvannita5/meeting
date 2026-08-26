@@ -71,33 +71,23 @@ app.post('/api/login', async (req, res) => {
       return res.status(403).json({ success: false, message: `អ្នកគ្មានសិទ្ធិចូលបន្ទប់ ${roomId} ទេ!` });
     }
 
-    // ត្រួតពិនិត្យ Multi-Device Login សម្រាប់ 2FA
     let onlineSockets = [];
     for (let [sId, data] of activeSockets.entries()) {
       if (data.username === username) onlineSockets.push(sId);
     }
 
     if (onlineSockets.length > 0) {
-      // បង្កើតលេខកូដ ៦ ខ្ទង់
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
       otpStore[username] = otp;
-      
-      // ផ្ញើកូដទៅ Device ចាស់
       onlineSockets.forEach(sId => io.to(sId).emit('receive-otp', { otp, ip: req.ip }));
-      
-      // Alert ទៅ Admin
       io.emit('admin-alert', { username: username, count: onlineSockets.length + 1 });
-      
       return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។ សូមបញ្ចូលលេខកូដ 2FA ដែលបានផ្ញើទៅឧបករណ៍នោះ!' });
     }
 
     res.json({ success: true, user: { id: user._id, username: user.username, role: user.role, assignedRoom: user.assignedRoom } });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+  } catch (err) { res.status(500).json({ success: false, message: 'Server error' }); }
 });
 
-// API បញ្ជាក់កូដ 2FA
 app.post('/api/verify-2fa', async (req, res) => {
   const { username, password, otp } = req.body;
   if (otpStore[username] && otpStore[username] === otp) {
@@ -109,28 +99,20 @@ app.post('/api/verify-2fa', async (req, res) => {
   }
 });
 
-// API User ប្តូរ Password
 app.post('/api/change-password', async (req, res) => {
   const { username, oldPassword, newPassword } = req.body;
   try {
     const user = await User.findOne({ username, password: oldPassword });
     if (!user) return res.status(401).json({ success: false, message: '❌ លេខសម្ងាត់ចាស់មិនត្រឹមត្រូវទេ!' });
-    user.password = newPassword;
-    await user.save();
+    user.password = newPassword; await user.save();
     res.json({ success: true, message: '✅ ប្តូរលេខសម្ងាត់បានជោគជ័យ!' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+  } catch (err) { res.status(500).json({ success: false, message: 'Server error' }); }
 });
 
 // APIs សម្រាប់ Admin
 app.get('/api/users', async (req, res) => {
-  try {
-    const users = await User.find({}, '-password');
-    res.json({ users: users.map(u => ({ id: u._id, username: u.username, role: u.role, assignedRoom: u.assignedRoom, isBlocked: u.isBlocked })) });
-  } catch (err) {
-    res.status(500).json({ message: 'Error fetching users' });
-  }
+  try { const users = await User.find({}, '-password'); res.json({ users: users.map(u => ({ id: u._id, username: u.username, role: u.role, assignedRoom: u.assignedRoom, isBlocked: u.isBlocked })) }); } 
+  catch (err) { res.status(500).json({ message: 'Error fetching users' }); }
 });
 
 app.post('/api/create-user', async (req, res) => {
@@ -141,50 +123,33 @@ app.post('/api/create-user', async (req, res) => {
     if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
     await User.create({ username, password, assignedRoom });
     res.json({ success: true, message: 'បង្កើត User ជោគជ័យ!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error creating user' });
-  }
+  } catch (err) { res.status(500).json({ message: 'Error creating user' }); }
 });
 
 app.delete('/api/users/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (user && user.role === 'admin') return res.status(400).json({ message: 'មិនអាចលុប Admin បានទេ!' });
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: 'លុប User រួចរាល់!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error deleting user' });
-  }
+    await User.findByIdAndDelete(req.params.id); res.json({ success: true, message: 'លុប User រួចរាល់!' });
+  } catch (err) { res.status(500).json({ message: 'Error deleting user' }); }
 });
 
 app.put('/api/users/:id/reset-password', async (req, res) => {
-  try {
-    await User.findByIdAndUpdate(req.params.id, { password: req.body.newPassword });
-    res.json({ success: true, message: 'ប្តូរ Password ជោគជ័យ!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error updating password' });
-  }
+  try { await User.findByIdAndUpdate(req.params.id, { password: req.body.newPassword }); res.json({ success: true, message: 'ប្តូរ Password ជោគជ័យ!' }); } 
+  catch (err) { res.status(500).json({ message: 'Error updating password' }); }
 });
 
 app.put('/api/users/:id/toggle-block', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (user.role === 'admin') return res.status(400).json({ message: 'មិនអាច Block Admin បានទេ!' });
-    user.isBlocked = !user.isBlocked;
-    await user.save();
-    res.json({ success: true, message: 'ប្តូរស្ថានភាពរួចរាល់!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error updating status' });
-  }
+    user.isBlocked = !user.isBlocked; await user.save(); res.json({ success: true, message: 'ប្តូរស្ថានភាពរួចរាល់!' });
+  } catch (err) { res.status(500).json({ message: 'Error updating status' }); }
 });
 
 app.put('/api/users/:id/edit-room', async (req, res) => {
-  try {
-    await User.findByIdAndUpdate(req.params.id, { assignedRoom: req.body.newRoom });
-    res.json({ success: true, message: 'ប្តូរបន្ទប់រួចរាល់!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error updating room' });
-  }
+  try { await User.findByIdAndUpdate(req.params.id, { assignedRoom: req.body.newRoom }); res.json({ success: true, message: 'ប្តូរបន្ទប់រួចរាល់!' }); } 
+  catch (err) { res.status(500).json({ message: 'Error updating room' }); }
 });
 
 app.post('/api/create-room', async (req, res) => {
@@ -193,11 +158,8 @@ app.post('/api/create-room', async (req, res) => {
   try {
     const exists = await Room.findOne({ roomId });
     if (exists) return res.status(400).json({ message: 'បន្ទប់នេះមានរួចហើយ!' });
-    await Room.create({ roomId });
-    res.json({ success: true, message: 'បង្កើតបន្ទប់ជោគជ័យ!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error creating room' });
-  }
+    await Room.create({ roomId }); res.json({ success: true, message: 'បង្កើតបន្ទប់ជោគជ័យ!' });
+  } catch (err) { res.status(500).json({ message: 'Error creating room' }); }
 });
 
 app.get('/api/rooms-status', async (req, res) => {
@@ -209,38 +171,41 @@ app.get('/api/rooms-status', async (req, res) => {
       users: roomUsers[r.roomId] ? roomUsers[r.roomId].map(u => u.username) : []
     }));
     res.json({ rooms: roomsData });
-  } catch (err) {
-    res.status(500).json({ message: 'Error fetching status' });
-  }
+  } catch (err) { res.status(500).json({ message: 'Error fetching status' }); }
 });
 
 app.get('/api/rooms', async (req, res) => {
-  try {
-    const rooms = await Room.find();
-    res.json({ rooms: rooms.map(r => r.roomId) });
-  } catch (err) {
-    res.status(500).json({ message: 'Error fetching rooms' });
-  }
+  try { const rooms = await Room.find(); res.json({ rooms: rooms.map(r => r.roomId) }); } 
+  catch (err) { res.status(500).json({ message: 'Error fetching rooms' }); }
 });
 
 // Socket.io Realtime Signaling & Chat
 io.on('connection', (socket) => {
+  
+  // ⚡ ចុះឈ្មោះ Admin ចូលបន្ទប់តាមដាន
+  socket.on('register-admin', () => {
+    socket.join('admin-room');
+  });
+
   socket.on('join-room', (roomId, peerId, username) => {
     socket.join(roomId);
     socket.data.roomId = roomId;
     socket.data.peerId = peerId;
     socket.data.username = username;
-    
+
     activeSockets.set(socket.id, { username, roomId });
 
     if (!roomUsers[roomId]) roomUsers[roomId] = [];
     roomUsers[roomId] = roomUsers[roomId].filter(u => u.peerId !== peerId && u.username !== username);
-    
+
     const existingUsers = [...roomUsers[roomId]];
     roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
     socket.emit('existing-users', existingUsers);
     socket.to(roomId).emit('user-joined', { peerId, username });
+
+    // ⚡ Update ទៅកាន់ Admin Dashboard ភ្លាមៗពេលមានអ្នកចូល
+    io.to('admin-room').emit('rooms-update');
 
     socket.on('disconnect', () => {
       activeSockets.delete(socket.id);
@@ -249,10 +214,11 @@ io.on('connection', (socket) => {
         socket.to(roomId).emit('user-left', socket.data.peerId);
         if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
       }
+      // ⚡ Update ទៅកាន់ Admin Dashboard ភ្លាមៗពេលមានអ្នកចេញ
+      io.to('admin-room').emit('rooms-update');
     });
   });
 
-  // ទទួល និងបញ្ជូន Private Message
   socket.on('private-message', ({ toPeerId, message }) => {
     const roomId = socket.data.roomId;
     if (roomUsers[roomId]) {
