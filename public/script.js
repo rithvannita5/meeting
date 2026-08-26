@@ -219,7 +219,7 @@ function createActiveDummyMediaStream() {
   }
   draw();
 
-  const videoStream = canvas.captureStream(20);
+  const videoStream = canvas.captureStream(15);
   const videoTrack = videoStream.getVideoTracks()[0];
 
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -333,7 +333,17 @@ const PEER_CONFIG = {
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:global.stun.twilio.com:3478' }
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
     ]
   }
 };
@@ -375,6 +385,7 @@ async function startMeeting() {
     socket.emit('join-room', currentRoomId, id, myUsername);
   });
 
+  // ទទួលការ Call ពីសមាជិកដទៃ
   myPeer.on('call', (call) => {
     const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
     call.answer(streamToSend);
@@ -394,19 +405,24 @@ async function startMeeting() {
     });
   });
 
+  // អ្នកចូលថ្មី ទទួលបានបញ្ជីសមាជិកចាស់ទាំងអស់ ហើយ Call ទៅកាន់អ្នកចាស់គ្រប់ៗគ្នា
   socket.on('existing-users', (users) => {
-    users.forEach(user => {
+    users.forEach((user, index) => {
       addRemoteVideo(user.peerId, user.username);
-      setTimeout(() => connectToUser(user.peerId), 800);
+      setTimeout(() => {
+        connectToUser(user.peerId);
+      }, (index + 1) * 600); // ទុកចន្លោះពេលបន្តិចដើម្បីកុំឱ្យ Traffic ជាន់គ្នា
     });
     updateUserCount();
   });
 
+  // សមាជិកចាស់ គ្រាន់តែបង្កើតប្រអប់ UI ទទួលអ្នកថ្មី
   socket.on('user-joined', ({ peerId, username }) => {
     if (peerId !== myId) {
       addRemoteVideo(peerId, username);
       updateUserCount();
 
+      // បើកំពុង Share Screen បញ្ជូនអេក្រង់ទៅឱ្យអ្នកថ្មី
       if (isScreenSharing && screenStream) {
         setTimeout(() => {
           const targetScreenPeerId = 'screen-' + peerId;
@@ -656,12 +672,5 @@ function leaveRoom() {
   if (localStream) localStream.getTracks().forEach(track => track.stop());
   socket.disconnect();
 
-  if (currentUserRole === 'admin') {
-    document.getElementById('room-container').classList.add('hidden');
-    document.getElementById('admin-dashboard').classList.remove('hidden');
-    loadAdminRoomMonitor();
-    loadUsersTable();
-  } else {
-    location.reload();
-  }
+  location.reload();
 }
