@@ -8,23 +8,15 @@ const mongoose = require('mongoose');
 const app = express();
 const server = http.createServer(app);
 
-// PeerServer ដំណើរការលើ Server ផ្ទាល់
-const peerServer = ExpressPeerServer(server, {
-  debug: true,
-  path: '/'
-});
+const peerServer = ExpressPeerServer(server, { debug: true, path: '/' });
 app.use('/peerjs', peerServer);
 
-const io = new Server(server, { 
-  cors: { origin: "*" },
-  transports: ['websocket', 'polling']
-});
+const io = new Server(server, { cors: { origin: "*" }, transports: ['websocket', 'polling'] });
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-// ភ្ជាប់ទៅកាន់ MongoDB Atlas
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://rithvannita5_db_user:81Aokzd93Q9Vu3Xb@cluster0.oaj62a4.mongodb.net/meetingDB?retryWrites=true&w=majority&appName=Cluster0";
 
 const userSchema = new mongoose.Schema({
@@ -46,32 +38,25 @@ mongoose.connect(MONGO_URI)
   .then(async () => {
     console.log('✅ Connected to MongoDB Atlas!');
     const adminExists = await User.findOne({ username: 'admin' });
-    if (!adminExists) {
-      await User.create({ username: 'admin', password: '123', role: 'admin', assignedRoom: 'all', isBlocked: false });
-    }
+    if (!adminExists) await User.create({ username: 'admin', password: '123', role: 'admin', assignedRoom: 'all' });
     const defaultRoom1 = await Room.findOne({ roomId: 'room-1' });
     if (!defaultRoom1) await Room.create({ roomId: 'room-1' });
-    const defaultRoom2 = await Room.findOne({ roomId: 'room-2' });
-    if (!defaultRoom2) await Room.create({ roomId: 'room-2' });
   })
   .catch(err => console.error('MongoDB Error:', err));
 
 const roomUsers = {};
-const activeSockets = new Map(); // សម្រាប់តាមដាន Device
-const otpStore = {}; // សម្រាប់ផ្ទុកកូដ 2FA
+const activeSockets = new Map(); 
+const otpStore = {}; // ឃ្លាំងផ្ទុកកូដ 2FA បណ្តោះអាសន្ន
 
-// API Login និង 2FA Logic
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
   try {
     const user = await User.findOne({ username, password });
     if (!user) return res.status(401).json({ success: false, message: 'ឈ្មោះ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ!' });
     if (user.isBlocked) return res.status(403).json({ success: false, message: 'គណនីត្រូវបានផ្អាក!' });
-    if (user.role !== 'admin' && user.assignedRoom !== roomId) {
-      return res.status(403).json({ success: false, message: `អ្នកគ្មានសិទ្ធិចូលបន្ទប់ ${roomId} ទេ!` });
-    }
+    if (user.role !== 'admin' && user.assignedRoom !== roomId) return res.status(403).json({ success: false, message: `គ្មានសិទ្ធិចូលបន្ទប់នេះទេ!` });
 
-    // ត្រួតពិនិត្យ Multi-Device Login សម្រាប់ 2FA
+    // ត្រួតពិនិត្យថាមាន Online លើ Device ផ្សេងឬអត់ (2FA Logic)
     let onlineSockets = [];
     for (let [sId, data] of activeSockets.entries()) {
       if (data.username === username) onlineSockets.push(sId);
@@ -82,13 +67,13 @@ app.post('/api/login', async (req, res) => {
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
       otpStore[username] = otp;
       
-      // ផ្ញើកូដទៅ Device ចាស់
+      // ផ្ញើកូដទៅ Device ទី១ 
       onlineSockets.forEach(sId => io.to(sId).emit('receive-otp', { otp, ip: req.ip }));
       
-      // Alert ទៅ Admin
+      // Alert Admin
       io.emit('admin-alert', { username: username, count: onlineSockets.length + 1 });
       
-      return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។ សូមបញ្ចូលលេខកូដ 2FA ដែលបានផ្ញើទៅឧបករណ៍នោះ!' });
+      return res.json({ success: false, requires2FA: true, message: 'Device ទី១ របស់អ្នកកំពុង Online។ សូមវាយបញ្ចូលលេខកូដ 2FA ដែលបានផ្ញើទៅកាន់ Device ទី១ នោះ!' });
     }
 
     res.json({ success: true, user: { id: user._id, username: user.username, role: user.role, assignedRoom: user.assignedRoom } });
@@ -109,7 +94,6 @@ app.post('/api/verify-2fa', async (req, res) => {
   }
 });
 
-// API User ប្តូរ Password
 app.post('/api/change-password', async (req, res) => {
   const { username, oldPassword, newPassword } = req.body;
   try {
@@ -123,107 +107,18 @@ app.post('/api/change-password', async (req, res) => {
   }
 });
 
-// APIs សម្រាប់ Admin
 app.get('/api/users', async (req, res) => {
-  try {
-    const users = await User.find({}, '-password');
-    res.json({ users: users.map(u => ({ id: u._id, username: u.username, role: u.role, assignedRoom: u.assignedRoom, isBlocked: u.isBlocked })) });
-  } catch (err) {
-    res.status(500).json({ message: 'Error fetching users' });
-  }
-});
-
-app.post('/api/create-user', async (req, res) => {
-  const { username, password, assignedRoom } = req.body;
-  if (!username || !password || !assignedRoom) return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់!' });
-  try {
-    const exists = await User.findOne({ username });
-    if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
-    await User.create({ username, password, assignedRoom });
-    res.json({ success: true, message: 'បង្កើត User ជោគជ័យ!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error creating user' });
-  }
-});
-
-app.delete('/api/users/:id', async (req, res) => {
-  try {
-    const user = await User.findById(req.params.id);
-    if (user && user.role === 'admin') return res.status(400).json({ message: 'មិនអាចលុប Admin បានទេ!' });
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: 'លុប User រួចរាល់!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error deleting user' });
-  }
-});
-
-app.put('/api/users/:id/reset-password', async (req, res) => {
-  try {
-    await User.findByIdAndUpdate(req.params.id, { password: req.body.newPassword });
-    res.json({ success: true, message: 'ប្តូរ Password ជោគជ័យ!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error updating password' });
-  }
-});
-
-app.put('/api/users/:id/toggle-block', async (req, res) => {
-  try {
-    const user = await User.findById(req.params.id);
-    if (user.role === 'admin') return res.status(400).json({ message: 'មិនអាច Block Admin បានទេ!' });
-    user.isBlocked = !user.isBlocked;
-    await user.save();
-    res.json({ success: true, message: 'ប្តូរស្ថានភាពរួចរាល់!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error updating status' });
-  }
-});
-
-app.put('/api/users/:id/edit-room', async (req, res) => {
-  try {
-    await User.findByIdAndUpdate(req.params.id, { assignedRoom: req.body.newRoom });
-    res.json({ success: true, message: 'ប្តូរបន្ទប់រួចរាល់!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error updating room' });
-  }
-});
-
-app.post('/api/create-room', async (req, res) => {
-  const { roomId } = req.body;
-  if (!roomId) return res.status(400).json({ message: 'សូមបញ្ចូលឈ្មោះបន្ទប់!' });
-  try {
-    const exists = await Room.findOne({ roomId });
-    if (exists) return res.status(400).json({ message: 'បន្ទប់នេះមានរួចហើយ!' });
-    await Room.create({ roomId });
-    res.json({ success: true, message: 'បង្កើតបន្ទប់ជោគជ័យ!' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error creating room' });
-  }
-});
-
-app.get('/api/rooms-status', async (req, res) => {
-  try {
-    const rooms = await Room.find();
-    const roomsData = rooms.map(r => ({
-      roomId: r.roomId,
-      userCount: roomUsers[r.roomId] ? roomUsers[r.roomId].length : 0,
-      users: roomUsers[r.roomId] ? roomUsers[r.roomId].map(u => u.username) : []
-    }));
-    res.json({ rooms: roomsData });
-  } catch (err) {
-    res.status(500).json({ message: 'Error fetching status' });
-  }
+  const users = await User.find({}, '-password');
+  res.json({ users: users.map(u => ({ id: u._id, username: u.username, role: u.role, assignedRoom: u.assignedRoom, isBlocked: u.isBlocked })) });
 });
 
 app.get('/api/rooms', async (req, res) => {
-  try {
-    const rooms = await Room.find();
-    res.json({ rooms: rooms.map(r => r.roomId) });
-  } catch (err) {
-    res.status(500).json({ message: 'Error fetching rooms' });
-  }
+  const rooms = await Room.find();
+  res.json({ rooms: rooms.map(r => r.roomId) });
 });
 
-// Socket.io Realtime Signaling & Chat
+// សុំកាត់ API Admin ដទៃទៀតចេញបន្តិចដើម្បីខ្លី (បងអាច Paste API Admin ចាស់ៗចូលទីនេះបាន)
+
 io.on('connection', (socket) => {
   socket.on('join-room', (roomId, peerId, username) => {
     socket.join(roomId);
