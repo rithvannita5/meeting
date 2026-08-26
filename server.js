@@ -64,12 +64,9 @@ app.post('/api/login', async (req, res) => {
     if (onlineSockets.length > 0) {
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
       otpStore[username] = otp;
-      
       onlineSockets.forEach(sId => io.to(sId).emit('receive-otp', { otp }));
-      // បាញ់ Alert ទៅបន្ទប់ Admin ផ្ទាល់
       io.to('admin-room').emit('admin-alert', { username: username, count: onlineSockets.length + 1 });
-      
-      return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។ សូមបញ្ចូលលេខកូដ 2FA ដែលបានផ្ញើទៅឧបករណ៍នោះ!' });
+      return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។ សូមបញ្ចូលលេខកូដ 2FA!' });
     }
 
     res.json({ success: true, user: { id: user._id, username: user.username, role: user.role, assignedRoom: user.assignedRoom } });
@@ -89,7 +86,6 @@ app.post('/api/verify-2fa', async (req, res) => {
   }
 });
 
-// -- API ផ្សេងៗរក្សាដូចដើម --
 app.post('/api/change-password', async (req, res) => {
   const { username, oldPassword, newPassword } = req.body;
   try {
@@ -129,10 +125,7 @@ app.get('/api/rooms', async (req, res) => {
   try { const rooms = await Room.find(); res.json({ rooms: rooms.map(r => r.roomId) }); } catch (err) {}
 });
 
-// ================= SOCKET LOGIC =================
 io.on('connection', (socket) => {
-  
-  // បង្កើតបន្ទប់ពិសេសសម្រាប់ Admin តាមដាន Alert
   socket.on('register-admin', () => {
     socket.join('admin-room');
   });
@@ -147,10 +140,9 @@ io.on('connection', (socket) => {
 
     if (!roomUsers[roomId]) roomUsers[roomId] = [];
     
-    // បើមាន Device ចាស់ក្នុងបន្ទប់នេះ សូមទាត់វាចេញមុននឹងឱ្យ Device ថ្មីចូល (Auto-Kick ដើម្បីកុំឱ្យស្ទួន)
     const oldSessions = roomUsers[roomId].filter(u => u.username === username && u.socketId !== socket.id);
     oldSessions.forEach(old => {
-      io.to(old.socketId).emit('kicked-out', 'មានឧបករណ៍ថ្មីបាន Login ចូលគណនីរបស់អ្នក។ ប្រព័ន្ធបានផ្តាច់ឧបករណ៍នេះចេញ!');
+      io.to(old.socketId).emit('kicked-out', 'មានឧបករណ៍ថ្មីបាន Login ចូលគណនីរបស់អ្នក។');
     });
 
     roomUsers[roomId] = roomUsers[roomId].filter(u => u.username !== username);
@@ -161,6 +153,9 @@ io.on('connection', (socket) => {
     socket.emit('existing-users', existingUsers);
     socket.to(roomId).emit('user-joined', { peerId, username });
 
+    // Broadcast ទៅ Admin ឱ្យ Update ផ្ទាំង Monitor ភ្លាមៗ
+    io.to('admin-room').emit('rooms-update');
+
     socket.on('disconnect', () => {
       activeSockets.delete(socket.id);
       if (roomUsers[roomId]) {
@@ -168,6 +163,7 @@ io.on('connection', (socket) => {
         socket.to(roomId).emit('user-left', socket.data.peerId);
         if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
       }
+      io.to('admin-room').emit('rooms-update');
     });
   });
 
