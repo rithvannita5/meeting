@@ -15,7 +15,7 @@ let isCameraOn = false;
 let isScreenSharing = false;
 let dummyAnimFrame = null;
 let allRoomsList = [];
-let pendingLoginData = null; 
+let pendingLoginData = null; // ទុកទិន្នន័យចាំវាយកូដ 2FA
 
 const localVideo = document.getElementById('localVideo');
 const screenGrid = document.getElementById('screenGrid');
@@ -215,7 +215,6 @@ function finalizeLogin(data) {
   document.getElementById('auth').classList.add('hidden');
 
   if (currentUserRole === 'admin') {
-    // ចុះឈ្មោះ Socket ជា Admin ដើម្បីទទួល Alert
     socket.emit('register-admin'); 
     document.getElementById('admin-dashboard').classList.remove('hidden');
     loadAdminRoomMonitor();
@@ -367,6 +366,7 @@ async function toggleCamera() {
   }
 }
 function replaceVideoTrackToPeers(newVideoTrack) { for (const [peerId, call] of Object.entries(peerCalls)) { const pc = call.peerConnection; if (!pc) continue; const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video'); if (videoSender && newVideoTrack) videoSender.replaceTrack(newVideoTrack); } }
+
 async function toggleScreenShare() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return alert('⚠️ មុខងារ Share Screen អាចដំណើរការបានតែលើកុំព្យូទ័រ (Computer/Laptop) ប៉ុណ្ណោះ!');
   if (isScreenSharing) { stopScreenShare(); } else {
