@@ -32,7 +32,6 @@ function makeFullscreen(elem) {
 }
 localVideo.onclick = () => makeFullscreen(localVideo);
 
-// Check if already logged in before refresh
 window.addEventListener('DOMContentLoaded', () => {
   loadRooms();
   if (myUsername && currentRoomId) {
@@ -49,7 +48,6 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-// Admin Socket Listener for Real-time update
 socket.on('rooms-update', () => {
   if (currentUserRole === 'admin') {
     loadAdminRoomMonitor();
@@ -329,34 +327,36 @@ async function startMeeting() {
     socket.emit('join-room', currentRoomId, myPeerId, myUsername);
   });
 
-  socket.on('existing-users', (users) => {
-    users.forEach((user, index) => { 
-      userNamesMap[user.peerId] = user.username; 
-      addRemoteVideo(user.peerId, user.username); 
-      setTimeout(() => connectToUser(user.peerId), (index + 1) * 300); 
-    });
-    updateUserCount(); 
-    updateChatUserList();
-  });
-
-  socket.on('user-joined', ({ peerId, username }) => {
-    if (peerId !== myPeerId) {
-      userNamesMap[peerId] = username; 
-      addRemoteVideo(peerId, username); 
-      updateUserCount(); 
-      updateChatUserList();
-
-      // ហៅទៅ User ថ្មីភ្លាមៗដោយស្វ័យប្រវត្តិ
-      setTimeout(() => connectToUser(peerId), 500);
-
-      if (isScreenSharing && screenStream) {
-        setTimeout(() => {
-          const targetScreenId = peerId + '_screen';
-          const call = myScreenPeer.call(targetScreenId, screenStream, { metadata: { username: myUsername } });
-          screenCalls[peerId] = call;
-        }, 1000);
+  // ប្រើប្រាស់ update-user-list ដើម្បី同期 (Sync) ឱ្យគ្រប់ User ទាំងអស់ឃើញគ្នាស្មើគ្នាជានិច្ច
+  socket.on('update-user-list', (users) => {
+    // លុប Box ណាមួយដែលចេញពីបន្ទប់ ឬ Update ថ្មី
+    const activePeerIds = users.map(u => u.peerId);
+    
+    // ពិនិត្យលុប User ណាដែលមិនមានក្នុង List
+    for (let peerId of Object.keys(userNamesMap)) {
+      if (peerId !== myPeerId && !activePeerIds.includes(peerId)) {
+        removeRemoteVideo(peerId);
+        removeRemoteScreenVideo(peerId + '_screen');
+        if (peerCalls[peerId]) { peerCalls[peerId].close(); delete peerCalls[peerId]; }
+        if (screenCalls[peerId]) { screenCalls[peerId].close(); delete screenCalls[peerId]; }
+        delete userNamesMap[peerId];
       }
     }
+
+    users.forEach((user, index) => {
+      if (user.peerId !== myPeerId) {
+        userNamesMap[user.peerId] = user.username;
+        addRemoteVideo(user.peerId, user.username);
+        
+        // បើទាន់មានការ Call ជាមួយគ្នាទេ ធ្វើការ Call ទៅកាន់ Peer ថ្មីនោះភ្លាមៗ
+        if (!peerCalls[user.peerId]) {
+          setTimeout(() => connectToUser(user.peerId), index * 300);
+        }
+      }
+    });
+
+    updateUserCount();
+    updateChatUserList();
   });
 
   socket.on('user-left', (peerId) => {
@@ -464,6 +464,7 @@ async function toggleScreenShare() {
       
       addRemoteScreenVideo('my-local-screen', screenStream, myUsername + " (អ្នក)"); 
       
+      // ส่งสตรีมหน้าจอไปยังทุก Peer ใน userNamesMap ทันทีที่กดแชร์
       for (const peerId of Object.keys(userNamesMap)) { 
         if (peerId !== myPeerId) {
           const targetScreenId = peerId + '_screen';
