@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const app = express();
 const server = http.createServer(app);
 
-// បង្កើត PeerServer ផ្ទាល់ខ្លួនលើ Server នេះតែម្តង (លែងដាច់ 5 នាទីទៀតហើយ)
+// PeerServer ដំណើរការលើ Server ផ្ទាល់ខ្លួន
 const peerServer = ExpressPeerServer(server, {
   debug: true,
   path: '/'
@@ -56,7 +56,9 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error('MongoDB Error:', err));
 
 const roomUsers = {};
+const activeSockets = new Map(); // តាមដានឧបករណ៍ដែលកំពុង Login
 
+// API Login
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
   try {
@@ -72,6 +74,21 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// API User ប្តូរលេខសម្ងាត់ខ្លួនឯង
+app.post('/api/change-password', async (req, res) => {
+  const { username, oldPassword, newPassword } = req.body;
+  try {
+    const user = await User.findOne({ username, password: oldPassword });
+    if (!user) return res.status(401).json({ success: false, message: '❌ លេខសម្ងាត់ចាស់មិនត្រឹមត្រូវទេ!' });
+    user.password = newPassword;
+    await user.save();
+    res.json({ success: true, message: '✅ ប្តូរលេខសម្ងាត់បានជោគជ័យ!' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// API Users សម្រាប់ Admin Dashboard
 app.get('/api/users', async (req, res) => {
   try {
     const users = await User.find({}, '-password');
@@ -171,6 +188,7 @@ app.get('/api/rooms', async (req, res) => {
   }
 });
 
+// Socket.io Realtime Signaling & Multi-Device Monitoring
 io.on('connection', (socket) => {
   socket.on('join-room', (roomId, peerId, username) => {
     socket.join(roomId);
@@ -178,6 +196,16 @@ io.on('connection', (socket) => {
     socket.data.peerId = peerId;
     socket.data.username = username;
     
+    // ពិនិត្យការ Login លើសពី ១ ឧបករណ៍ក្នុងពេលតែមួយ
+    let deviceCount = 0;
+    for (let [sId, data] of activeSockets.entries()) {
+      if (data.username === username) deviceCount++;
+    }
+    if (deviceCount > 0) {
+      io.emit('admin-alert', { username: username, count: deviceCount + 1 });
+    }
+    activeSockets.set(socket.id, { username, roomId });
+
     if (!roomUsers[roomId]) roomUsers[roomId] = [];
     roomUsers[roomId] = roomUsers[roomId].filter(u => u.peerId !== peerId && u.username !== username);
     
@@ -188,6 +216,7 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('user-joined', { peerId, username });
 
     socket.on('disconnect', () => {
+      activeSockets.delete(socket.id);
       if (roomUsers[roomId]) {
         roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
         socket.to(roomId).emit('user-left', socket.data.peerId);
