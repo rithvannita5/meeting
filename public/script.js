@@ -113,16 +113,16 @@ async function loadUsersTable() {
         : '<span style="color:#10b981; font-weight:bold;">Active</span>';
       
       const adminActions = user.role === 'admin' ? '<span style="color:#64748b;">No actions</span>' : `
-        <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser(${user.id})">
+        <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user.id}')">
           ${isBlocked ? 'Unblock' : 'Block'}
         </button>
-        <button class="action-btn btn-secondary" onclick="editUserRoom(${user.id}, '${user.assignedRoom}')">
+        <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">
           ប្តូរបន្ទប់
         </button>
-        <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword(${user.id}, '${user.username}')">
+        <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">
           Reset Pwd
         </button>
-        <button class="action-btn btn-danger" onclick="deleteUser(${user.id}, '${user.username}')">
+        <button class="action-btn btn-danger" onclick="deleteUser('${user.id}', '${user.username}')">
           លុប
         </button>
       `;
@@ -200,7 +200,6 @@ async function editUserRoom(id, currentRoom) {
   }
 }
 
-// បង្កើត Dummy Stream ដែលមាន Animation ចលនាពិតប្រាកដ (ទើប WebRTC ដំណើរការភ្លាម)
 function createActiveDummyMediaStream() {
   const canvas = document.createElement('canvas');
   canvas.width = 320;
@@ -211,18 +210,16 @@ function createActiveDummyMediaStream() {
   function draw() {
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // គូសរង្វង់ចលនាស្រាលៗដើម្បីឱ្យ Browser ដឹងថាជា Video Live
     ctx.fillStyle = '#38bdf8';
     ctx.beginPath();
     ctx.arc(160 + Math.cos(angle) * 30, 120 + Math.sin(angle) * 20, 10, 0, Math.PI * 2);
     ctx.fill();
-    angle += 0.05;
+    angle += 0.08;
     dummyAnimFrame = requestAnimationFrame(draw);
   }
   draw();
 
-  const videoStream = canvas.captureStream(15);
+  const videoStream = canvas.captureStream(20);
   const videoTrack = videoStream.getVideoTracks()[0];
 
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -304,7 +301,6 @@ async function createNewUser() {
     }
   } catch (err) {
     console.error('Error creating user:', err);
-    alert('មានបញ្ហាក្នុងការបង្កើត User!');
   }
 }
 
@@ -324,13 +320,10 @@ async function createNewRoom() {
     if (data.success) {
       document.getElementById('newRoomId').value = '';
       await loadRooms();
-      if (currentUserRole === 'admin') {
-        loadAdminRoomMonitor();
-      }
+      if (currentUserRole === 'admin') loadAdminRoomMonitor();
     }
   } catch (err) {
     console.error('Error creating room:', err);
-    alert('មានបញ្ហាក្នុងការបង្កើតបន្ទប់!');
   }
 }
 
@@ -340,8 +333,7 @@ const PEER_CONFIG = {
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' },
-      { urls: 'stun:stun4.l.google.com:19302' }
+      { urls: 'stun:global.stun.twilio.com:3478' }
     ]
   }
 };
@@ -367,7 +359,6 @@ async function startMeeting() {
     document.getElementById('room-container').classList.remove('hidden');
     document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId}`;
     
-    // បង្កើត Peer ទី ២ សម្រាប់ Screen
     screenPeer = new Peer('screen-' + myId, PEER_CONFIG);
     screenPeer.on('call', (call) => {
       call.answer();
@@ -403,19 +394,19 @@ async function startMeeting() {
     });
   });
 
-  socket.on('all-users', (users) => {
+  // អ្នកចូលថ្មីគ្រាន់តែបង្កើតផ្ទាំង UI រង់ចាំអ្នកចាស់ Call មក
+  socket.on('existing-users', (users) => {
     users.forEach(user => {
-      if (user.peerId !== myId) {
-        addRemoteVideo(user.peerId, user.username);
-        setTimeout(() => connectToUser(user.peerId), 1000);
-      }
+      addRemoteVideo(user.peerId, user.username);
     });
     updateUserCount();
   });
 
+  // អ្នកចាស់នៅក្នុងបន្ទប់ ទទួលខុសត្រូវ Call ទៅកាន់អ្នកទើបចូលថ្មី
   socket.on('user-joined', ({ peerId, username }) => {
     if (peerId !== myId) {
       addRemoteVideo(peerId, username);
+      setTimeout(() => connectToUser(peerId), 1200);
       updateUserCount();
     }
   });
@@ -463,7 +454,7 @@ function connectToUser(peerId) {
     });
 
   } catch (err) {
-    console.error('❌ Error calling peer:', err);
+    console.error('Error calling peer:', err);
   }
 }
 
@@ -535,7 +526,7 @@ function removeRemoteScreenVideo(peerId) {
 }
 
 function updateUserCount() {
-  const count = Object.keys(peerConnections).length + 1;
+  const count = document.querySelectorAll('.video-box:not(.screen-box)').length;
   document.getElementById('welcome-text').innerText = 
     `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId} | អ្នកប្រើ: ${count}`;
 }
