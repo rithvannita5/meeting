@@ -11,6 +11,7 @@ let isCameraOn = false;
 let isScreenSharing = false;
 let screenStream = null;
 let cameraStream = null;
+let dummyCanvasInterval = null;
 let allRoomsList = [];
 
 const localVideo = document.getElementById('localVideo');
@@ -24,7 +25,6 @@ function makeFullscreen(elem) {
 
 localVideo.onclick = () => makeFullscreen(localVideo);
 
-// ប្តូរ Tab លើ Admin Dashboard
 function switchAdminTab(tab) {
   document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-tabs button').forEach(el => el.classList.remove('active'));
@@ -43,7 +43,6 @@ function switchAdminTab(tab) {
   }
 }
 
-// ផ្ទុកបញ្ជីបន្ទប់ចូលទៅក្នុង Dropdowns
 async function loadRooms() {
   try {
     const res = await fetch('/api/rooms');
@@ -67,7 +66,6 @@ async function loadRooms() {
 
 window.onload = loadRooms;
 
-// បង្ហាញបន្ទប់សកម្មជា Card សម្រាប់ Admin
 async function loadAdminRoomMonitor() {
   try {
     const res = await fetch('/api/rooms-status');
@@ -96,7 +94,6 @@ async function loadAdminRoomMonitor() {
   }
 }
 
-// ផ្ទុកតារាង User ទាំងអស់
 async function loadUsersTable() {
   try {
     const res = await fetch('/api/users');
@@ -140,7 +137,6 @@ async function loadUsersTable() {
   }
 }
 
-// Block / Unblock User
 async function toggleBlockUser(id) {
   try {
     const res = await fetch(`/api/users/${id}/toggle-block`, { method: 'PUT' });
@@ -152,7 +148,6 @@ async function toggleBlockUser(id) {
   }
 }
 
-// Delete User
 async function deleteUser(id, username) {
   if (!confirm(`តើអ្នកប្រាកដថាចង់លុប User "${username}" ទេ?`)) return;
   try {
@@ -165,7 +160,6 @@ async function deleteUser(id, username) {
   }
 }
 
-// Reset Password
 async function resetPassword(id, username) {
   const newPassword = prompt(`បញ្ចូលលេខសម្ងាត់ថ្មីសម្រាប់ ${username}:`);
   if (!newPassword) return;
@@ -183,7 +177,6 @@ async function resetPassword(id, username) {
   }
 }
 
-// Edit User Room
 async function editUserRoom(id, currentRoom) {
   const newRoom = prompt(`បញ្ចូលបន្ទប់ថ្មី (បន្ទប់បច្ចុប្បន្ន: ${currentRoom}):\nជម្រើសបន្ទប់ដែលមាន: ${allRoomsList.join(', ')}`);
   if (!newRoom) return;
@@ -202,16 +195,20 @@ async function editUserRoom(id, currentRoom) {
   }
 }
 
-// បង្កើត Dummy Media Stream សម្រាប់ Audio & Video ក្លែងក្លាយ
+// បង្កើត Dummy Media Stream ឱ្យមាន Animation ស្រាល ដើម្បីឱ្យ PeerJS មិនគាំង
 function createDummyMediaStream() {
   const canvas = document.createElement('canvas');
-  canvas.width = 640;
-  canvas.height = 480;
+  canvas.width = 320;
+  canvas.height = 240;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  
-  const videoStream = canvas.captureStream(10);
+
+  if (dummyCanvasInterval) clearInterval(dummyCanvasInterval);
+  dummyCanvasInterval = setInterval(() => {
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }, 1000);
+
+  const videoStream = canvas.captureStream(5);
   const videoTrack = videoStream.getVideoTracks()[0];
 
   const audioCtx = new AudioContext();
@@ -230,7 +227,6 @@ function getCurrentActiveStream() {
   return localStream;
 }
 
-// Login
 async function login() {
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value.trim();
@@ -277,7 +273,6 @@ function logoutAdmin() {
   location.reload();
 }
 
-// Admin បង្កើត User ថ្មី
 async function createNewUser() {
   const username = document.getElementById('newUsername').value.trim();
   const password = document.getElementById('newPassword').value.trim();
@@ -305,7 +300,6 @@ async function createNewUser() {
   }
 }
 
-// Admin បង្កើតបន្ទប់ថ្មី
 async function createNewRoom() {
   const roomId = document.getElementById('newRoomId').value.trim();
   if (!roomId) return alert('សូមបញ្ចូលឈ្មោះបន្ទប់!');
@@ -332,7 +326,6 @@ async function createNewRoom() {
   }
 }
 
-// ចាប់ផ្ដើមការប្រជុំ (Meeting)
 async function startMeeting() {
   try {
     const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -382,7 +375,7 @@ async function startMeeting() {
     users.forEach(user => {
       if (user.peerId !== myId) {
         addRemoteVideo(user.peerId, user.username);
-        setTimeout(() => connectToUser(user.peerId), 500);
+        setTimeout(() => connectToUser(user.peerId), 600);
       }
     });
     updateUserCount();
@@ -391,7 +384,7 @@ async function startMeeting() {
   socket.on('user-joined', ({ peerId, username }) => {
     if (peerId !== myId) {
       addRemoteVideo(peerId, username);
-      setTimeout(() => connectToUser(peerId), 500);
+      setTimeout(() => connectToUser(peerId), 600);
       updateUserCount();
     }
   });
@@ -519,12 +512,11 @@ function updateUserCount() {
     `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId} | អ្នកប្រើ: ${count}`;
 }
 
-// មុខងារ បើក/បិទ កាមេរ៉ា (Camera)
+// មុខងារ បើក/បិទ កាមេរ៉ា
 async function toggleCamera() {
   const camBtn = document.getElementById('camBtn');
   
   if (isCameraOn) {
-    // បិទ Camera ត្រឡប់ទៅ Dummy Video
     if (cameraStream) {
       cameraStream.getTracks().forEach(track => track.stop());
       cameraStream = null;
@@ -537,11 +529,12 @@ async function toggleCamera() {
     localVideo.srcObject = localStream;
     replaceVideoTrackToPeers(dummyTrack);
   } else {
-    // បើក Camera
     try {
       if (isScreenSharing) await stopScreenShare();
 
-      cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      cameraStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: { ideal: 640 }, height: { ideal: 480 } } 
+      });
       const camTrack = cameraStream.getVideoTracks()[0];
       
       isCameraOn = true;
@@ -560,7 +553,6 @@ async function toggleCamera() {
   }
 }
 
-// មុខងារ Share Screen
 async function shareScreen() {
   try {
     if (isScreenSharing) {
@@ -611,7 +603,6 @@ async function stopScreenShare() {
   replaceVideoTrackToPeers(fallbackTrack);
 }
 
-// ជំនួស Track វីដេអូទៅកាន់ដៃគូទាំងអស់
 function replaceVideoTrackToPeers(newVideoTrack) {
   for (const [peerId, call] of Object.entries(peerConnections)) {
     const pc = call.peerConnection;
@@ -635,6 +626,7 @@ function toggleMic() {
 }
 
 function leaveRoom() {
+  if (dummyCanvasInterval) clearInterval(dummyCanvasInterval);
   if (isScreenSharing) stopScreenShare();
   if (isCameraOn && cameraStream) {
     cameraStream.getTracks().forEach(track => track.stop());
