@@ -119,76 +119,34 @@ async function loadUsersTable() {
   } catch (err) { console.error('Error loading user table:', err); }
 }
 
-// មុខងារ Kick
 function kickUser(username) {
   if (!confirm(`តើអ្នកប្រាកដថាចង់ទាត់ (Kick) User "${username}" ចេញពីប្រព័ន្ធទេ?`)) return;
   socket.emit('kick-user', username);
-  alert(`✅ បានបញ្ជា Kick គណនី ${username} ចេញពីប្រព័ន្ធរួចរាល់!`);
+  alert(`✅ បានបញ្ជា Kick គណនី ${username} រួចរាល់!`);
 }
 
-async function toggleBlockUser(id) {
-  try { const res = await fetch(`/api/users/${id}/toggle-block`, { method: 'PUT' }); const data = await res.json(); alert(data.message); await loadUsersTable(); } catch (err) {}
-}
-async function deleteUser(id, username) {
-  if (!confirm(`តើអ្នកប្រាកដថាចង់លុប User "${username}" ទេ?`)) return;
-  try { const res = await fetch(`/api/users/${id}`, { method: 'DELETE' }); const data = await res.json(); alert(data.message); await loadUsersTable(); } catch (err) {}
-}
-async function resetPassword(id, username) {
-  const newPassword = prompt(`បញ្ចូលលេខសម្ងាត់ថ្មីសម្រាប់ ${username}:`);
-  if (!newPassword) return;
-  try { const res = await fetch(`/api/users/${id}/reset-password`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newPassword }) }); const data = await res.json(); alert(data.message); } catch (err) {}
-}
-async function editUserRoom(id, currentRoom) {
-  const newRoom = prompt(`បញ្ចូលបន្ទប់ថ្មី (បន្ទប់បច្ចុប្បន្ន: ${currentRoom}):\nជម្រើសបន្ទប់ដែលមាន: ${allRoomsList.join(', ')}`);
-  if (!newRoom) return;
-  try { const res = await fetch(`/api/users/${id}/edit-room`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newRoom }) }); const data = await res.json(); alert(data.message); await loadUsersTable(); } catch (err) {}
-}
-async function createNewUser() {
-  const username = document.getElementById('newUsername').value.trim(); const password = document.getElementById('newPassword').value.trim(); const assignedRoom = document.getElementById('userAssignedRoomSelect').value;
-  if (!username || !password) return alert('សូមបំពេញព័ត៌មាន!');
-  try {
-    const res = await fetch('/api/create-user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, assignedRoom }) });
-    const data = await res.json(); alert(data.message);
-    if (data.success) { document.getElementById('newUsername').value = ''; document.getElementById('newPassword').value = ''; await loadUsersTable(); }
-  } catch (err) {}
-}
-async function createNewRoom() {
-  const roomId = document.getElementById('newRoomId').value.trim();
-  if (!roomId) return alert('សូមបញ្ចូលឈ្មោះបន្ទប់!');
-  try {
-    const res = await fetch('/api/create-room', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId }) });
-    const data = await res.json(); alert(data.message);
-    if (data.success) { document.getElementById('newRoomId').value = ''; await loadRooms(); if (currentUserRole === 'admin') loadAdminRoomMonitor(); }
-  } catch (err) {}
-}
+async function toggleBlockUser(id) { try { const res = await fetch(`/api/users/${id}/toggle-block`, { method: 'PUT' }); const data = await res.json(); alert(data.message); await loadUsersTable(); } catch (err) {} }
+async function deleteUser(id, username) { if (!confirm(`តើអ្នកប្រាកដថាចង់លុប User "${username}" ទេ?`)) return; try { const res = await fetch(`/api/users/${id}`, { method: 'DELETE' }); const data = await res.json(); alert(data.message); await loadUsersTable(); } catch (err) {} }
+async function resetPassword(id, username) { const newPassword = prompt(`បញ្ចូលលេខសម្ងាត់ថ្មីសម្រាប់ ${username}:`); if (!newPassword) return; try { const res = await fetch(`/api/users/${id}/reset-password`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newPassword }) }); const data = await res.json(); alert(data.message); } catch (err) {} }
+async function editUserRoom(id, currentRoom) { const newRoom = prompt(`បញ្ចូលបន្ទប់ថ្មី (បន្ទប់បច្ចុប្បន្ន: ${currentRoom}):\nជម្រើសបន្ទប់ដែលមាន: ${allRoomsList.join(', ')}`); if (!newRoom) return; try { const res = await fetch(`/api/users/${id}/edit-room`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newRoom }) }); const data = await res.json(); alert(data.message); await loadUsersTable(); } catch (err) {} }
+async function createNewUser() { const username = document.getElementById('newUsername').value.trim(); const password = document.getElementById('newPassword').value.trim(); const assignedRoom = document.getElementById('userAssignedRoomSelect').value; if (!username || !password) return alert('សូមបំពេញព័ត៌មាន!'); try { const res = await fetch('/api/create-user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, assignedRoom }) }); const data = await res.json(); alert(data.message); if (data.success) { document.getElementById('newUsername').value = ''; document.getElementById('newPassword').value = ''; await loadUsersTable(); } } catch (err) {} }
+async function createNewRoom() { const roomId = document.getElementById('newRoomId').value.trim(); if (!roomId) return alert('សូមបញ្ចូលឈ្មោះបន្ទប់!'); try { const res = await fetch('/api/create-room', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId }) }); const data = await res.json(); alert(data.message); if (data.success) { document.getElementById('newRoomId').value = ''; await loadRooms(); if (currentUserRole === 'admin') loadAdminRoomMonitor(); } } catch (err) {} }
 
-function adminJoinRoom(roomId) {
-  currentRoomId = roomId;
-  document.getElementById('admin-dashboard').classList.add('hidden');
-  startMeeting();
-}
-
-function logoutAdmin() {
-  myUsername = ''; currentUserRole = ''; currentRoomId = ''; location.reload();
-}
+function adminJoinRoom(roomId) { currentRoomId = roomId; document.getElementById('admin-dashboard').classList.add('hidden'); startMeeting(); }
+function logoutAdmin() { myUsername = ''; currentUserRole = ''; currentRoomId = ''; location.reload(); }
 function logout() { logoutAdmin(); }
 
 // ================= USER & AUTH FUNCTIONS =================
 
 async function changeMyPassword() {
-  const oldPwd = prompt('🔑 សូមបញ្ចូលលេខសម្ងាត់ចាស់របស់អ្នក:');
-  if (!oldPwd) return;
-  const newPwd = prompt('🔒 សូមបញ្ចូលលេខសម្ងាត់ថ្មី:');
-  if (!newPwd) return;
-  try {
-    const res = await fetch('/api/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: myUsername, oldPassword: oldPwd, newPassword: newPwd }) });
-    const data = await res.json(); alert(data.message);
-  } catch (err) { alert('មានបញ្ហាក្នុងការប្តូរលេខសម្ងាត់!'); }
+  const oldPwd = prompt('🔑 សូមបញ្ចូលលេខសម្ងាត់ចាស់របស់អ្នក:'); if (!oldPwd) return;
+  const newPwd = prompt('🔒 សូមបញ្ចូលលេខសម្ងាត់ថ្មី:'); if (!newPwd) return;
+  try { const res = await fetch('/api/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: myUsername, oldPassword: oldPwd, newPassword: newPwd }) }); const data = await res.json(); alert(data.message); } catch (err) { alert('មានបញ្ហាក្នុងការប្តូរលេខសម្ងាត់!'); }
 }
 
-// ទទួលពេល Admin បញ្ជា Kick
-socket.on('kicked-out', () => {
-  alert('🚨 គណនីរបស់អ្នកត្រូវបាន Admin បណ្តេញចេញ (Kicked Out) ដោយសារសកម្មភាពខុសប្រក្រតី!');
+// ទទួលពេលត្រូវបានគេ Kick ឬ Auto-Kick ពី Device ថ្មី
+socket.on('kicked-out', (reason) => {
+  alert(`🚨 ${reason || 'គណនីរបស់អ្នកត្រូវបាន Admin បណ្តេញចេញដោយសារសកម្មភាពខុសប្រក្រតី!'}`);
   if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
   if (isScreenSharing) stopScreenShare();
   if (isCameraOn && cameraStream) { cameraStream.getTracks().forEach(track => track.stop()); }
@@ -196,20 +154,17 @@ socket.on('kicked-out', () => {
   if (myPeer) myPeer.destroy();
   if (localStream) localStream.getTracks().forEach(track => track.stop());
   socket.disconnect();
-  location.reload(); // Refresh ទំព័រត្រឡប់ទៅ Login វិញ
+  location.reload(); 
 });
 
 socket.on('receive-otp', (data) => {
   alert(`🚨 ព្រមាន៖ មានគេកំពុងព្យាយាម Login ចូលគណនីរបស់អ្នកពីឧបករណ៍ផ្សេង!\n\n🔐 នេះជាលេខកូដ 2FA របស់អ្នក៖ 【 ${data.otp} 】\n\n(សូមកុំប្រាប់លេខកូដនេះទៅអ្នកណាឱ្យសោះ!)`);
 });
 
-// Admin Alert លោតបញ្ជាក់ឱ្យទាត់ចេញ
 socket.on('admin-alert', (data) => {
   if (currentUserRole === 'admin') {
     const doKick = confirm(`🚨 សេចក្តីប្រកាសអាសន្នសុវត្ថិភាព!\n\nUser ឈ្មោះ "${data.username}" កំពុង Login លើឧបករណ៍ចំនួន ${data.count} ក្នុងពេលតែមួយ!\n\n👉 តើអ្នកចង់ទាត់ (Kick) គណនីនេះចេញពីប្រព័ន្ធឥឡូវនេះទេ?`);
-    if (doKick) {
-      socket.emit('kick-user', data.username);
-    }
+    if (doKick) socket.emit('kick-user', data.username);
   }
 });
 
@@ -239,7 +194,6 @@ async function login() {
 async function verify2FA() {
   const otp = document.getElementById('otpInput').value.trim();
   if (!otp) return alert('សូមវាយបញ្ចូលលេខកូដ!');
-  
   try {
     const res = await fetch('/api/verify-2fa', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...pendingLoginData, otp }) });
     const data = await res.json();
@@ -250,10 +204,7 @@ async function verify2FA() {
   } catch (err) { alert('លេខកូដមិនត្រឹមត្រូវទេ!'); }
 }
 
-function cancel2FA() {
-  document.getElementById('otp-modal').classList.add('hidden');
-  pendingLoginData = null;
-}
+function cancel2FA() { document.getElementById('otp-modal').classList.add('hidden'); pendingLoginData = null; }
 
 function finalizeLogin(data) {
   myUsername = data.user.username;
@@ -264,6 +215,8 @@ function finalizeLogin(data) {
   document.getElementById('auth').classList.add('hidden');
 
   if (currentUserRole === 'admin') {
+    // ចុះឈ្មោះ Socket ជា Admin ដើម្បីទទួល Alert
+    socket.emit('register-admin'); 
     document.getElementById('admin-dashboard').classList.remove('hidden');
     loadAdminRoomMonitor();
     loadUsersTable();
@@ -273,33 +226,20 @@ function finalizeLogin(data) {
 }
 
 // ================= PRIVATE CHAT =================
-function toggleChat() {
-  document.getElementById('chat-panel').classList.toggle('hidden');
-}
-
+function toggleChat() { document.getElementById('chat-panel').classList.toggle('hidden'); }
 function updateChatUserList() {
   const select = document.getElementById('chatRecipientSelect');
   select.innerHTML = '<option value="">-- ជ្រើសរើសអ្នកទទួល --</option>';
-  for (let [peerId, name] of Object.entries(userNamesMap)) {
-    select.innerHTML += `<option value="${peerId}">${name}</option>`;
-  }
+  for (let [peerId, name] of Object.entries(userNamesMap)) { select.innerHTML += `<option value="${peerId}">${name}</option>`; }
 }
-
 function sendPrivateMsg() {
-  const toPeerId = document.getElementById('chatRecipientSelect').value;
-  const msgInput = document.getElementById('chatInput');
-  const message = msgInput.value.trim();
-
+  const toPeerId = document.getElementById('chatRecipientSelect').value; const msgInput = document.getElementById('chatInput'); const message = msgInput.value.trim();
   if (!toPeerId || !message) return alert('សូមរើសអ្នកទទួល និងវាយសារជាមុនសិន!');
-  
   socket.emit('private-message', { toPeerId, message });
-  
   const chatMsgs = document.getElementById('chat-messages');
   chatMsgs.innerHTML += `<div class="msg-item me"><b>To ${userNamesMap[toPeerId]}:</b><br>${message}</div>`;
-  chatMsgs.scrollTop = chatMsgs.scrollHeight;
-  msgInput.value = '';
+  chatMsgs.scrollTop = chatMsgs.scrollHeight; msgInput.value = '';
 }
-
 socket.on('receive-private-message', (data) => {
   document.getElementById('chat-panel').classList.remove('hidden'); 
   const chatMsgs = document.getElementById('chat-messages');
@@ -316,92 +256,56 @@ function createActiveDummyVideoTrack() {
     ctx.fillStyle = '#38bdf8'; ctx.beginPath(); ctx.arc(160 + Math.cos(angle) * 30, 120 + Math.sin(angle) * 20, 10, 0, Math.PI * 2); ctx.fill();
     angle += 0.08; dummyAnimFrame = requestAnimationFrame(draw);
   }
-  draw();
-  return canvas.captureStream(15).getVideoTracks()[0];
+  draw(); return canvas.captureStream(15).getVideoTracks()[0];
 }
 
 async function startMeeting() {
   let audioTrack;
   try {
-    const userMedia = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    audioTrack = userMedia.getAudioTracks()[0];
+    const userMedia = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }); audioTrack = userMedia.getAudioTracks()[0];
   } catch (e) {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const dst = audioCtx.createMediaStreamDestination();
-    audioTrack = dst.stream.getAudioTracks()[0];
-    audioTrack.enabled = false;
-    document.getElementById('micBtnIcon').innerHTML = '🔇';
-    document.getElementById('micBtnIcon').classList.add('off');
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)(); const dst = audioCtx.createMediaStreamDestination();
+    audioTrack = dst.stream.getAudioTracks()[0]; audioTrack.enabled = false;
+    document.getElementById('micBtnIcon').innerHTML = '🔇'; document.getElementById('micBtnIcon').classList.add('off');
   }
 
   localStream = new MediaStream([audioTrack, createActiveDummyVideoTrack()]);
   localVideo.srcObject = localStream;
 
-  myPeer = new Peer(undefined, {
-    host: location.hostname,
-    port: location.port || (location.protocol === 'https:' ? 443 : 80),
-    path: '/peerjs',
-    secure: location.protocol === 'https:',
-    config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] }
-  });
+  myPeer = new Peer(undefined, { host: location.hostname, port: location.port || (location.protocol === 'https:' ? 443 : 80), path: '/peerjs', secure: location.protocol === 'https:', config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] } });
 
   myPeer.on('open', (id) => {
-    myId = id;
-    document.getElementById('room-container').classList.remove('hidden');
-    document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId}`;
+    myId = id; document.getElementById('room-container').classList.remove('hidden'); document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId}`;
     socket.emit('join-room', currentRoomId, id, myUsername);
   });
 
   myPeer.on('call', (call) => {
-    const callType = call.metadata ? call.metadata.type : 'camera';
-    const callerName = call.metadata ? call.metadata.username : 'ដៃគូ';
-
+    const callType = call.metadata ? call.metadata.type : 'camera'; const callerName = call.metadata ? call.metadata.username : 'ដៃគូ';
     if (callType === 'screen') {
-      call.answer();
-      call.on('stream', (remoteScreenStream) => addRemoteScreenVideo(call.peer, remoteScreenStream, callerName));
-      call.on('close', () => removeRemoteScreenVideo(call.peer));
+      call.answer(); call.on('stream', (remoteScreenStream) => addRemoteScreenVideo(call.peer, remoteScreenStream, callerName)); call.on('close', () => removeRemoteScreenVideo(call.peer));
     } else {
-      call.answer(isCameraOn ? cameraStream : localStream);
-      peerCalls[call.peer] = call;
-      addRemoteVideo(call.peer, callerName);
-      call.on('stream', (remoteStream) => {
-        const videoEl = document.getElementById(`video-${call.peer}`);
-        if (videoEl) { videoEl.srcObject = remoteStream; updateConnectionStatus(call.peer, '🟢 Online'); }
-      });
+      call.answer(isCameraOn ? cameraStream : localStream); peerCalls[call.peer] = call; addRemoteVideo(call.peer, callerName);
+      call.on('stream', (remoteStream) => { const videoEl = document.getElementById(`video-${call.peer}`); if (videoEl) { videoEl.srcObject = remoteStream; updateConnectionStatus(call.peer, '🟢 Online'); } });
       call.on('close', () => { delete peerCalls[call.peer]; updateConnectionStatus(call.peer, '🔴 Offline'); });
     }
   });
 
   socket.on('existing-users', (users) => {
-    users.forEach((user, index) => {
-      userNamesMap[user.peerId] = user.username;
-      addRemoteVideo(user.peerId, user.username);
-      setTimeout(() => connectToUser(user.peerId), (index + 1) * 500);
-    });
-    updateUserCount();
-    updateChatUserList();
+    users.forEach((user, index) => { userNamesMap[user.peerId] = user.username; addRemoteVideo(user.peerId, user.username); setTimeout(() => connectToUser(user.peerId), (index + 1) * 500); });
+    updateUserCount(); updateChatUserList();
   });
 
   socket.on('user-joined', ({ peerId, username }) => {
     if (peerId !== myId) {
-      userNamesMap[peerId] = username;
-      addRemoteVideo(peerId, username);
-      updateUserCount();
-      updateChatUserList();
-
-      if (isScreenSharing && screenStream) {
-        setTimeout(() => myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } }), 1200);
-      }
+      userNamesMap[peerId] = username; addRemoteVideo(peerId, username); updateUserCount(); updateChatUserList();
+      if (isScreenSharing && screenStream) setTimeout(() => myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } }), 1200);
     }
   });
 
   socket.on('user-left', (peerId) => {
-    removeRemoteVideo(peerId);
-    removeRemoteScreenVideo(peerId);
+    removeRemoteVideo(peerId); removeRemoteScreenVideo(peerId);
     if (peerCalls[peerId]) { peerCalls[peerId].close(); delete peerCalls[peerId]; }
-    delete userNamesMap[peerId];
-    updateUserCount();
-    updateChatUserList();
+    delete userNamesMap[peerId]; updateUserCount(); updateChatUserList();
   });
 }
 
@@ -409,155 +313,84 @@ function connectToUser(peerId) {
   if (peerCalls[peerId]) return;
   const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
   try {
-    const call = myPeer.call(peerId, streamToSend, { metadata: { type: 'camera', username: myUsername } });
-    peerCalls[peerId] = call;
-    updateConnectionStatus(peerId, '⏳ Connecting...');
-
-    call.on('stream', (remoteStream) => {
-      const videoEl = document.getElementById(`video-${peerId}`);
-      if (videoEl) { videoEl.srcObject = remoteStream; updateConnectionStatus(peerId, '🟢 Online'); }
-    });
+    const call = myPeer.call(peerId, streamToSend, { metadata: { type: 'camera', username: myUsername } }); peerCalls[peerId] = call; updateConnectionStatus(peerId, '⏳ Connecting...');
+    call.on('stream', (remoteStream) => { const videoEl = document.getElementById(`video-${peerId}`); if (videoEl) { videoEl.srcObject = remoteStream; updateConnectionStatus(peerId, '🟢 Online'); } });
     call.on('close', () => { delete peerCalls[peerId]; updateConnectionStatus(peerId, '🔴 Offline'); });
     call.on('error', () => { delete peerCalls[peerId]; updateConnectionStatus(peerId, '🔴 Offline'); });
-
     if (isScreenSharing && screenStream) myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } });
   } catch (err) { console.error('Error calling peer:', err); }
 }
 
 function updateConnectionStatus(peerId, status) {
   const statusElement = document.getElementById(`status-${peerId}`);
-  if (statusElement) {
-    statusElement.textContent = status;
-    if (status.includes('🟢')) statusElement.style.color = '#10b981';
-    else if (status.includes('🔴')) statusElement.style.color = '#ef4444';
-    else statusElement.style.color = '#f59e0b';
-  }
+  if (statusElement) { statusElement.textContent = status; if (status.includes('🟢')) statusElement.style.color = '#10b981'; else if (status.includes('🔴')) statusElement.style.color = '#ef4444'; else statusElement.style.color = '#f59e0b'; }
 }
 
 function addRemoteVideo(peerId, username) {
   if (document.getElementById(`video-container-${peerId}`)) return;
-  const container = document.createElement('div');
-  container.className = 'video-box'; container.id = `video-container-${peerId}`;
-  container.innerHTML = `
-    <div class="name-tag">👤 ${username}</div>
-    <div class="status-tag"><span id="status-${peerId}" style="color: #f59e0b;">⏳ Connecting...</span></div>
-    <video id="video-${peerId}" autoplay playsinline title="ចុចដើម្បីមើលពេញអេក្រង់"></video>
-  `;
-  videoGrid.appendChild(container);
-  const video = document.getElementById(`video-${peerId}`);
-  if (video) video.onclick = () => makeFullscreen(video);
+  const container = document.createElement('div'); container.className = 'video-box'; container.id = `video-container-${peerId}`;
+  container.innerHTML = `<div class="name-tag">👤 ${username}</div><div class="status-tag"><span id="status-${peerId}" style="color: #f59e0b;">⏳ Connecting...</span></div><video id="video-${peerId}" autoplay playsinline title="ចុចដើម្បីមើលពេញអេក្រង់"></video>`;
+  videoGrid.appendChild(container); const video = document.getElementById(`video-${peerId}`); if (video) video.onclick = () => makeFullscreen(video);
 }
-
-function removeRemoteVideo(peerId) {
-  const container = document.getElementById(`video-container-${peerId}`);
-  if (container) container.remove();
-}
+function removeRemoteVideo(peerId) { const container = document.getElementById(`video-container-${peerId}`); if (container) container.remove(); }
 
 function addRemoteScreenVideo(peerId, stream, sharerName) {
   screenGrid.style.display = 'grid'; document.getElementById('screenTitle').style.display = 'block';
   let screenContainer = document.getElementById(`screen-container-${peerId}`);
   if (!screenContainer) {
-    screenContainer = document.createElement('div');
-    screenContainer.className = 'video-box screen-box'; screenContainer.id = `screen-container-${peerId}`;
+    screenContainer = document.createElement('div'); screenContainer.className = 'video-box screen-box'; screenContainer.id = `screen-container-${peerId}`;
     screenContainer.innerHTML = `<div class="name-tag" style="background:#f59e0b; color:#000;">🖥️ អេក្រង់របស់: ${sharerName}</div><video id="screen-video-${peerId}" autoplay playsinline title="ចុចដើម្បីមើលពេញអេក្រង់"></video>`;
     screenGrid.appendChild(screenContainer);
   }
-  const screenVideo = document.getElementById(`screen-video-${peerId}`);
-  if (screenVideo) { screenVideo.srcObject = stream; screenVideo.onclick = () => makeFullscreen(screenVideo); }
+  const screenVideo = document.getElementById(`screen-video-${peerId}`); if (screenVideo) { screenVideo.srcObject = stream; screenVideo.onclick = () => makeFullscreen(screenVideo); }
 }
 
 function removeRemoteScreenVideo(peerId) {
-  const screenContainer = document.getElementById(`screen-container-${peerId}`);
-  if (screenContainer) screenContainer.remove();
+  const screenContainer = document.getElementById(`screen-container-${peerId}`); if (screenContainer) screenContainer.remove();
   if (screenGrid.children.length === 0) { screenGrid.style.display = 'none'; document.getElementById('screenTitle').style.display = 'none'; }
 }
 
-function updateUserCount() {
-  const count = document.querySelectorAll('#videoGrid .video-box').length;
-  document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId} | អ្នកប្រើ: ${count}`;
-}
+function updateUserCount() { const count = document.querySelectorAll('#videoGrid .video-box').length; document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId} | អ្នកប្រើ: ${count}`; }
 
 async function toggleCamera() {
   const camIcon = document.getElementById('camBtnIcon');
   if (isCameraOn) {
     if (cameraStream) { cameraStream.getTracks().forEach(track => track.stop()); cameraStream = null; }
     isCameraOn = false; camIcon.innerHTML = '🚫'; camIcon.classList.add('off');
-    const dummyTrack = localStream.getVideoTracks()[0];
-    localVideo.srcObject = localStream; replaceVideoTrackToPeers(dummyTrack);
+    const dummyTrack = localStream.getVideoTracks()[0]; localVideo.srcObject = localStream; replaceVideoTrackToPeers(dummyTrack);
   } else {
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } });
-      const camTrack = cameraStream.getVideoTracks()[0];
-      isCameraOn = true; camIcon.innerHTML = '🎥'; camIcon.classList.remove('off');
-      localVideo.srcObject = cameraStream; replaceVideoTrackToPeers(camTrack);
-      camTrack.onended = () => toggleCamera();
+      const camTrack = cameraStream.getVideoTracks()[0]; isCameraOn = true; camIcon.innerHTML = '🎥'; camIcon.classList.remove('off');
+      localVideo.srcObject = cameraStream; replaceVideoTrackToPeers(camTrack); camTrack.onended = () => toggleCamera();
     } catch (err) { alert('មិនអាចបើកកាមេរ៉ាបានទេ: ' + err.message); }
   }
 }
-
-function replaceVideoTrackToPeers(newVideoTrack) {
-  for (const [peerId, call] of Object.entries(peerCalls)) {
-    const pc = call.peerConnection; if (!pc) continue;
-    const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-    if (videoSender && newVideoTrack) videoSender.replaceTrack(newVideoTrack);
-  }
-}
-
+function replaceVideoTrackToPeers(newVideoTrack) { for (const [peerId, call] of Object.entries(peerCalls)) { const pc = call.peerConnection; if (!pc) continue; const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video'); if (videoSender && newVideoTrack) videoSender.replaceTrack(newVideoTrack); } }
 async function toggleScreenShare() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return alert('⚠️ មុខងារ Share Screen អាចដំណើរការបានតែលើកុំព្យូទ័រ (Computer/Laptop) ប៉ុណ្ណោះ!');
-  if (isScreenSharing) {
-    stopScreenShare();
-  } else {
+  if (isScreenSharing) { stopScreenShare(); } else {
     try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-      isScreenSharing = true;
-      document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing';
-      document.getElementById('screenBtn').className = 'btn-danger';
-      
-      addRemoteScreenVideo('my-local-screen', screenStream, myUsername + " (អ្នក)");
-      for (const peerId of Object.keys(peerCalls)) myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } });
-      screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
-    } catch (err) { console.warn('Screen share canceled:', err); }
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }); isScreenSharing = true; document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing'; document.getElementById('screenBtn').className = 'btn-danger';
+      addRemoteScreenVideo('my-local-screen', screenStream, myUsername + " (អ្នក)"); for (const peerId of Object.keys(peerCalls)) myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } }); screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
+    } catch (err) {}
   }
 }
-
 function stopScreenShare() {
-  if (!isScreenSharing) return;
-  isScreenSharing = false;
-  document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
-  document.getElementById('screenBtn').className = 'btn-warning';
-  removeRemoteScreenVideo('my-local-screen');
+  if (!isScreenSharing) return; isScreenSharing = false; document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen'; document.getElementById('screenBtn').className = 'btn-warning'; removeRemoteScreenVideo('my-local-screen');
   if (screenStream) { screenStream.getTracks().forEach(track => track.stop()); screenStream = null; }
 }
-
 function toggleMic() {
-  const audioTrack = localStream.getAudioTracks()[0];
-  if (!audioTrack) return alert('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!');
-  const micIcon = document.getElementById('micBtnIcon');
-  audioTrack.enabled = !audioTrack.enabled;
-  if (audioTrack.enabled) { micIcon.innerHTML = '🎤'; micIcon.classList.remove('off'); } 
-  else { micIcon.innerHTML = '🔇'; micIcon.classList.add('off'); }
+  const audioTrack = localStream.getAudioTracks()[0]; if (!audioTrack) return alert('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!');
+  const micIcon = document.getElementById('micBtnIcon'); audioTrack.enabled = !audioTrack.enabled;
+  if (audioTrack.enabled) { micIcon.innerHTML = '🎤'; micIcon.classList.remove('off'); } else { micIcon.innerHTML = '🔇'; micIcon.classList.add('off'); }
 }
 
 function leaveRoom() {
-  if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
-  if (isScreenSharing) stopScreenShare();
-  if (isCameraOn && cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop()); cameraStream = null; isCameraOn = false;
-    document.getElementById('camBtnIcon').innerHTML = '🚫'; document.getElementById('camBtnIcon').classList.add('off');
-  }
+  if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame); if (isScreenSharing) stopScreenShare();
+  if (isCameraOn && cameraStream) { cameraStream.getTracks().forEach(track => track.stop()); cameraStream = null; isCameraOn = false; document.getElementById('camBtnIcon').innerHTML = '🚫'; document.getElementById('camBtnIcon').classList.add('off'); }
   for (const [peerId, call] of Object.entries(peerCalls)) { call.close(); delete peerCalls[peerId]; }
-  if (myPeer) myPeer.destroy();
-  if (localStream) localStream.getTracks().forEach(track => track.stop());
-  socket.disconnect();
-
-  document.getElementById('room-container').classList.add('hidden');
-  document.getElementById('mainBody').style.justifyContent = 'center';
-
-  if (currentUserRole === 'admin') {
-    document.getElementById('admin-dashboard').classList.remove('hidden');
-    socket.connect(); loadAdminRoomMonitor(); loadUsersTable();
-  } else {
-    location.reload(); 
-  }
+  if (myPeer) myPeer.destroy(); if (localStream) localStream.getTracks().forEach(track => track.stop()); socket.disconnect();
+  document.getElementById('room-container').classList.add('hidden'); document.getElementById('mainBody').style.justifyContent = 'center';
+  if (currentUserRole === 'admin') { document.getElementById('admin-dashboard').classList.remove('hidden'); socket.connect(); loadAdminRoomMonitor(); loadUsersTable(); } else { location.reload(); }
 }
