@@ -15,7 +15,7 @@ let isCameraOn = false;
 let isScreenSharing = false;
 let dummyAnimFrame = null;
 let allRoomsList = [];
-let pendingLoginData = null; // ទុកទិន្នន័យចាំវាយកូដ 2FA
+let pendingLoginData = null; 
 
 const localVideo = document.getElementById('localVideo');
 const screenGrid = document.getElementById('screenGrid');
@@ -107,6 +107,7 @@ async function loadUsersTable() {
       const statusText = isBlocked ? '<span style="color:#ef4444; font-weight:bold;">Blocked</span>' : '<span style="color:#10b981; font-weight:bold;">Active</span>';
       
       const adminActions = user.role === 'admin' ? '<span style="color:#64748b;">No actions</span>' : `
+        <button class="action-btn" style="background:#dc2626; color:white;" onclick="kickUser('${user.username}')">Kick ចេញ</button>
         <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user.id}')">${isBlocked ? 'Unblock' : 'Block'}</button>
         <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
         <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
@@ -116,6 +117,13 @@ async function loadUsersTable() {
       tbody.innerHTML += `<tr><td><strong>${user.username}</strong></td><td>${user.role}</td><td>${user.assignedRoom}</td><td>${statusText}</td><td>${adminActions}</td></tr>`;
     });
   } catch (err) { console.error('Error loading user table:', err); }
+}
+
+// មុខងារ Kick
+function kickUser(username) {
+  if (!confirm(`តើអ្នកប្រាកដថាចង់ទាត់ (Kick) User "${username}" ចេញពីប្រព័ន្ធទេ?`)) return;
+  socket.emit('kick-user', username);
+  alert(`✅ បានបញ្ជា Kick គណនី ${username} ចេញពីប្រព័ន្ធរួចរាល់!`);
 }
 
 async function toggleBlockUser(id) {
@@ -178,13 +186,30 @@ async function changeMyPassword() {
   } catch (err) { alert('មានបញ្ហាក្នុងការប្តូរលេខសម្ងាត់!'); }
 }
 
+// ទទួលពេល Admin បញ្ជា Kick
+socket.on('kicked-out', () => {
+  alert('🚨 គណនីរបស់អ្នកត្រូវបាន Admin បណ្តេញចេញ (Kicked Out) ដោយសារសកម្មភាពខុសប្រក្រតី!');
+  if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
+  if (isScreenSharing) stopScreenShare();
+  if (isCameraOn && cameraStream) { cameraStream.getTracks().forEach(track => track.stop()); }
+  for (const [peerId, call] of Object.entries(peerCalls)) { call.close(); delete peerCalls[peerId]; }
+  if (myPeer) myPeer.destroy();
+  if (localStream) localStream.getTracks().forEach(track => track.stop());
+  socket.disconnect();
+  location.reload(); // Refresh ទំព័រត្រឡប់ទៅ Login វិញ
+});
+
 socket.on('receive-otp', (data) => {
   alert(`🚨 ព្រមាន៖ មានគេកំពុងព្យាយាម Login ចូលគណនីរបស់អ្នកពីឧបករណ៍ផ្សេង!\n\n🔐 នេះជាលេខកូដ 2FA របស់អ្នក៖ 【 ${data.otp} 】\n\n(សូមកុំប្រាប់លេខកូដនេះទៅអ្នកណាឱ្យសោះ!)`);
 });
 
+// Admin Alert លោតបញ្ជាក់ឱ្យទាត់ចេញ
 socket.on('admin-alert', (data) => {
   if (currentUserRole === 'admin') {
-    alert(`🚨 សេចក្តីប្រកាសអាសន្នសុវត្ថិភាព!\n\nUser ឈ្មោះ "${data.username}" កំពុង Login លើឧបករណ៍ចំនួន ${data.count} ក្នុងពេលតែមួយ!`);
+    const doKick = confirm(`🚨 សេចក្តីប្រកាសអាសន្នសុវត្ថិភាព!\n\nUser ឈ្មោះ "${data.username}" កំពុង Login លើឧបករណ៍ចំនួន ${data.count} ក្នុងពេលតែមួយ!\n\n👉 តើអ្នកចង់ទាត់ (Kick) គណនីនេះចេញពីប្រព័ន្ធឥឡូវនេះទេ?`);
+    if (doKick) {
+      socket.emit('kick-user', data.username);
+    }
   }
 });
 
