@@ -319,6 +319,8 @@ async function login() {
     currentUserRole = data.user.role;
     currentRoomId = roomId;
 
+    document.getElementById('mainBody').style.justifyContent = 'flex-start';
+
     if (currentUserRole === 'admin') {
       document.getElementById('auth').classList.add('hidden');
       document.getElementById('admin-dashboard').classList.remove('hidden');
@@ -344,10 +346,9 @@ async function startMeeting() {
     const userMedia = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     audioTrack = userMedia.getAudioTracks()[0];
   } catch (e) {
+    // បង្កើត Silent Track ដោយមិនប្រើ Oscillator ដើម្បីកុំឱ្យមានសំឡេង "ងឺ..." ពេល Login
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = audioCtx.createOscillator();
-    const dst = osc.connect(audioCtx.createMediaStreamDestination());
-    osc.start();
+    const dst = audioCtx.createMediaStreamDestination();
     audioTrack = dst.stream.getAudioTracks()[0];
     audioTrack.enabled = false;
     document.getElementById('micBtnIcon').innerHTML = '🔇';
@@ -576,7 +577,7 @@ async function toggleCamera() {
       cameraStream = null;
     }
     isCameraOn = false;
-    camIcon.innerHTML = '🚫📹';
+    camIcon.innerHTML = '🚫'; // ដូរទៅសញ្ញាហាមឃាត់
     camIcon.classList.add('off');
 
     const dummyTrack = localStream.getVideoTracks()[0];
@@ -590,7 +591,7 @@ async function toggleCamera() {
       const camTrack = cameraStream.getVideoTracks()[0];
       
       isCameraOn = true;
-      camIcon.innerHTML = '📹';
+      camIcon.innerHTML = '🎥'; // ដូរទៅ Icon កាមេរ៉ាស្អាត
       camIcon.classList.remove('off');
 
       localVideo.srcObject = cameraStream;
@@ -682,7 +683,7 @@ function leaveRoom() {
     cameraStream.getTracks().forEach(track => track.stop());
     cameraStream = null;
     isCameraOn = false;
-    document.getElementById('camBtnIcon').innerHTML = '🚫📹';
+    document.getElementById('camBtnIcon').innerHTML = '🚫';
     document.getElementById('camBtnIcon').classList.add('off');
   }
   
@@ -697,6 +698,7 @@ function leaveRoom() {
   socket.disconnect();
 
   document.getElementById('room-container').classList.add('hidden');
+  document.getElementById('mainBody').style.justifyContent = 'center';
 
   if (currentUserRole === 'admin') {
     document.getElementById('admin-dashboard').classList.remove('hidden');
