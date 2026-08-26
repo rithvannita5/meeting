@@ -146,20 +146,18 @@ io.on('connection', (socket) => {
     });
 
     roomUsers[roomId] = roomUsers[roomId].filter(u => u.username !== username);
-    
-    const existingUsers = [...roomUsers[roomId]];
     roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
-    socket.emit('existing-users', existingUsers);
-    socket.to(roomId).emit('user-joined', { peerId, username });
+    // ส่งรายชื่อสมาชิกทั้งหมดในห้องกลับไปให้ทุกคนทราบโดยทั่วกัน เพื่อความแม่นยำ
+    io.to(roomId).emit('update-user-list', roomUsers[roomId].map(u => ({ peerId: u.peerId, username: u.username })));
 
-    // Broadcast ទៅ Admin ឱ្យ Update ផ្ទាំង Monitor ភ្លាមៗ
     io.to('admin-room').emit('rooms-update');
 
     socket.on('disconnect', () => {
       activeSockets.delete(socket.id);
       if (roomUsers[roomId]) {
         roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
+        io.to(roomId).emit('update-user-list', roomUsers[roomId].map(u => ({ peerId: u.peerId, username: u.username })));
         socket.to(roomId).emit('user-left', socket.data.peerId);
         if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
       }
