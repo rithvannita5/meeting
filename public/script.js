@@ -21,6 +21,13 @@ const localVideo = document.getElementById('localVideo');
 const screenGrid = document.getElementById('screenGrid');
 const videoGrid = document.getElementById('videoGrid');
 
+// ស្តាប់សញ្ញាពី Server ពេលមានអ្នកចេញចូលបន្ទប់ណាមួយ ដើម្បី Update តារាង Admin
+socket.on('rooms-update', () => {
+  if (currentUserRole === 'admin' && !document.getElementById('admin-dashboard').classList.contains('hidden')) {
+    loadAdminRoomMonitor();
+  }
+});
+
 // Click Fullscreen
 function makeFullscreen(elem) {
   if (elem.requestFullscreen) elem.requestFullscreen();
@@ -52,13 +59,13 @@ async function loadRooms() {
     const res = await fetch('/api/rooms');
     const data = await res.json();
     allRoomsList = data.rooms;
-    
+
     const select = document.getElementById('roomSelect');
     const adminSelect = document.getElementById('userAssignedRoomSelect');
-    
+
     if (select) select.innerHTML = '';
     if (adminSelect) adminSelect.innerHTML = '';
-    
+
     data.rooms.forEach(r => {
       if (select) select.innerHTML += `<option value="${r}">${r}</option>`;
       if (adminSelect) adminSelect.innerHTML += `<option value="${r}">${r}</option>`;
@@ -105,7 +112,7 @@ async function loadUsersTable() {
     data.users.forEach(user => {
       const isBlocked = user.isBlocked;
       const statusText = isBlocked ? '<span style="color:#ef4444; font-weight:bold;">Blocked</span>' : '<span style="color:#10b981; font-weight:bold;">Active</span>';
-      
+
       const adminActions = user.role === 'admin' ? '<span style="color:#64748b;">No actions</span>' : `
         <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user.id}')">${isBlocked ? 'Unblock' : 'Block'}</button>
         <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
@@ -214,7 +221,7 @@ async function login() {
 async function verify2FA() {
   const otp = document.getElementById('otpInput').value.trim();
   if (!otp) return alert('សូមវាយបញ្ចូលលេខកូដ!');
-  
+
   try {
     const res = await fetch('/api/verify-2fa', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...pendingLoginData, otp }) });
     const data = await res.json();
@@ -239,6 +246,7 @@ function finalizeLogin(data) {
   document.getElementById('auth').classList.add('hidden');
 
   if (currentUserRole === 'admin') {
+    socket.emit('register-admin'); // ឱ្យ Admin ចុះឈ្មោះទទួលសញ្ញា Update បន្ទប់
     document.getElementById('admin-dashboard').classList.remove('hidden');
     loadAdminRoomMonitor();
     loadUsersTable();
@@ -266,9 +274,9 @@ function sendPrivateMsg() {
   const message = msgInput.value.trim();
 
   if (!toPeerId || !message) return alert('សូមរើសអ្នកទទួល និងវាយសារជាមុនសិន!');
-  
+
   socket.emit('private-message', { toPeerId, message });
-  
+
   const chatMsgs = document.getElementById('chat-messages');
   chatMsgs.innerHTML += `<div class="msg-item me"><b>To ${userNamesMap[toPeerId]}:</b><br>${message}</div>`;
   chatMsgs.scrollTop = chatMsgs.scrollHeight;
@@ -346,6 +354,11 @@ async function startMeeting() {
       call.on('close', () => { delete peerCalls[call.peer]; updateConnectionStatus(call.peer, '🔴 Offline'); });
     }
   });
+
+  // ហាមដាក់ Listener ក្រៅពី function ប្រសិនបើចង់ Add ក្នុងនេះ ត្រូវ Remove ចាស់ៗចោលសិន
+  socket.off('existing-users');
+  socket.off('user-joined');
+  socket.off('user-left');
 
   socket.on('existing-users', (users) => {
     users.forEach((user, index) => {
@@ -488,7 +501,7 @@ async function toggleScreenShare() {
       isScreenSharing = true;
       document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing';
       document.getElementById('screenBtn').className = 'btn-danger';
-      
+
       addRemoteScreenVideo('my-local-screen', screenStream, myUsername + " (អ្នក)");
       for (const peerId of Object.keys(peerCalls)) myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } });
       screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
@@ -522,17 +535,31 @@ function leaveRoom() {
     document.getElementById('camBtnIcon').innerHTML = '🚫'; document.getElementById('camBtnIcon').classList.add('off');
   }
   for (const [peerId, call] of Object.entries(peerCalls)) { call.close(); delete peerCalls[peerId]; }
+  
   if (myPeer) myPeer.destroy();
   if (localStream) localStream.getTracks().forEach(track => track.stop());
+  
+  // លុប Listeners កុំឱ្យជាន់គ្នានៅពេលចុច Join ម្តងទៀត
+  socket.off('existing-users');
+  socket.off('user-joined');
+  socket.off('user-left');
+  
   socket.disconnect();
 
   document.getElementById('room-container').classList.add('hidden');
-  document.getElementById('mainBody').style.justifyContent = 'center';
 
   if (currentUserRole === 'admin') {
     document.getElementById('admin-dashboard').classList.remove('hidden');
-    socket.connect(); loadAdminRoomMonitor(); loadUsersTable();
+    document.getElementById('mainBody').style.justifyContent = 'flex-start';
+    
+    // ភ្ជាប់ Socket សារជាថ្មី និង Register Admin ឡើងវិញ
+    socket.connect(); 
+    socket.emit('register-admin'); 
+    
+    loadAdminRoomMonitor(); 
+    loadUsersTable();
   } else {
+    document.getElementById('mainBody').style.justifyContent = 'center';
     location.reload(); 
   }
 }
