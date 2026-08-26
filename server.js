@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const app = express();
 const server = http.createServer(app);
 
-// PeerServer ដំណើរការលើ Server ផ្ទាល់ខ្លួន
+// PeerServer ដំណើរការលើ Server ផ្ទាល់
 const peerServer = ExpressPeerServer(server, {
   debug: true,
   path: '/'
@@ -24,6 +24,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
+// ភ្ជាប់ទៅកាន់ MongoDB Atlas
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://rithvannita5_db_user:81Aokzd93Q9Vu3Xb@cluster0.oaj62a4.mongodb.net/meetingDB?retryWrites=true&w=majority&appName=Cluster0";
 
 const userSchema = new mongoose.Schema({
@@ -56,9 +57,10 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error('MongoDB Error:', err));
 
 const roomUsers = {};
-const activeSockets = new Map(); // តាមដានឧបករណ៍ដែលកំពុង Login
+const activeSockets = new Map(); // សម្រាប់តាមដាន Device
+const otpStore = {}; // សម្រាប់ផ្ទុកកូដ 2FA
 
-// API Login
+// API Login និង 2FA Logic
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
   try {
@@ -68,13 +70,46 @@ app.post('/api/login', async (req, res) => {
     if (user.role !== 'admin' && user.assignedRoom !== roomId) {
       return res.status(403).json({ success: false, message: `អ្នកគ្មានសិទ្ធិចូលបន្ទប់ ${roomId} ទេ!` });
     }
+
+    // ត្រួតពិនិត្យ Multi-Device Login សម្រាប់ 2FA
+    let onlineSockets = [];
+    for (let [sId, data] of activeSockets.entries()) {
+      if (data.username === username) onlineSockets.push(sId);
+    }
+
+    if (onlineSockets.length > 0) {
+      // បង្កើតលេខកូដ ៦ ខ្ទង់
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      otpStore[username] = otp;
+      
+      // ផ្ញើកូដទៅ Device ចាស់
+      onlineSockets.forEach(sId => io.to(sId).emit('receive-otp', { otp, ip: req.ip }));
+      
+      // Alert ទៅ Admin
+      io.emit('admin-alert', { username: username, count: onlineSockets.length + 1 });
+      
+      return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។ សូមបញ្ចូលលេខកូដ 2FA ដែលបានផ្ញើទៅឧបករណ៍នោះ!' });
+    }
+
     res.json({ success: true, user: { id: user._id, username: user.username, role: user.role, assignedRoom: user.assignedRoom } });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// API User ប្តូរលេខសម្ងាត់ខ្លួនឯង
+// API បញ្ជាក់កូដ 2FA
+app.post('/api/verify-2fa', async (req, res) => {
+  const { username, password, otp } = req.body;
+  if (otpStore[username] && otpStore[username] === otp) {
+    delete otpStore[username];
+    const user = await User.findOne({ username, password });
+    res.json({ success: true, user: { id: user._id, username: user.username, role: user.role, assignedRoom: user.assignedRoom } });
+  } else {
+    res.status(401).json({ success: false, message: '❌ លេខកូដ 2FA មិនត្រឹមត្រូវទេ!' });
+  }
+});
+
+// API User ប្តូរ Password
 app.post('/api/change-password', async (req, res) => {
   const { username, oldPassword, newPassword } = req.body;
   try {
@@ -88,7 +123,7 @@ app.post('/api/change-password', async (req, res) => {
   }
 });
 
-// API Users សម្រាប់ Admin Dashboard
+// APIs សម្រាប់ Admin
 app.get('/api/users', async (req, res) => {
   try {
     const users = await User.find({}, '-password');
@@ -188,7 +223,7 @@ app.get('/api/rooms', async (req, res) => {
   }
 });
 
-// Socket.io Realtime Signaling & Multi-Device Monitoring
+// Socket.io Realtime Signaling & Chat
 io.on('connection', (socket) => {
   socket.on('join-room', (roomId, peerId, username) => {
     socket.join(roomId);
@@ -196,14 +231,6 @@ io.on('connection', (socket) => {
     socket.data.peerId = peerId;
     socket.data.username = username;
     
-    // ពិនិត្យការ Login លើសពី ១ ឧបករណ៍ក្នុងពេលតែមួយ
-    let deviceCount = 0;
-    for (let [sId, data] of activeSockets.entries()) {
-      if (data.username === username) deviceCount++;
-    }
-    if (deviceCount > 0) {
-      io.emit('admin-alert', { username: username, count: deviceCount + 1 });
-    }
     activeSockets.set(socket.id, { username, roomId });
 
     if (!roomUsers[roomId]) roomUsers[roomId] = [];
@@ -223,6 +250,21 @@ io.on('connection', (socket) => {
         if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
       }
     });
+  });
+
+  // ទទួល និងបញ្ជូន Private Message
+  socket.on('private-message', ({ toPeerId, message }) => {
+    const roomId = socket.data.roomId;
+    if (roomUsers[roomId]) {
+      const targetUser = roomUsers[roomId].find(u => u.peerId === toPeerId);
+      if (targetUser) {
+        socket.to(targetUser.socketId).emit('receive-private-message', {
+          fromPeerId: socket.data.peerId,
+          fromUsername: socket.data.username,
+          message: message
+        });
+      }
+    }
   });
 });
 
