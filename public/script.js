@@ -1,6 +1,11 @@
 const socket = io();
+
+// បង្កើត ID ២ ផ្សេងគ្នា (មួយសម្រាប់ Camera, មួយសម្រាប់ Screen)
+let myPeerId = 'user_' + Math.random().toString(36).substr(2, 9);
+let myScreenPeerId = myPeerId + '_screen';
+
 let myPeer;
-let myId = '';
+let myScreenPeer;
 let myUsername = '';
 let currentUserRole = '';
 let currentRoomId = '';
@@ -9,13 +14,14 @@ let cameraStream = null;
 let screenStream = null;
 
 const peerCalls = {};
+const screenCalls = {}; // ឃ្លាំងផ្ទុកខ្សែ Screen ដាច់ដោយឡែក
 const userNamesMap = {};
 
 let isCameraOn = false;
 let isScreenSharing = false;
 let dummyAnimFrame = null;
 let allRoomsList = [];
-let pendingLoginData = null; // ទុកទិន្នន័យចាំវាយកូដ 2FA
+let pendingLoginData = null; 
 
 const localVideo = document.getElementById('localVideo');
 const screenGrid = document.getElementById('screenGrid');
@@ -52,20 +58,15 @@ async function loadRooms() {
     const res = await fetch('/api/rooms');
     const data = await res.json();
     allRoomsList = data.rooms;
-    
     const select = document.getElementById('roomSelect');
     const adminSelect = document.getElementById('userAssignedRoomSelect');
-    
     if (select) select.innerHTML = '';
     if (adminSelect) adminSelect.innerHTML = '';
-    
     data.rooms.forEach(r => {
       if (select) select.innerHTML += `<option value="${r}">${r}</option>`;
       if (adminSelect) adminSelect.innerHTML += `<option value="${r}">${r}</option>`;
     });
-  } catch (err) {
-    console.error('Error fetching rooms:', err);
-  }
+  } catch (err) { console.error('Error fetching rooms:', err); }
 }
 window.onload = loadRooms;
 
@@ -144,17 +145,9 @@ async function changeMyPassword() {
   try { const res = await fetch('/api/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: myUsername, oldPassword: oldPwd, newPassword: newPwd }) }); const data = await res.json(); alert(data.message); } catch (err) { alert('មានបញ្ហាក្នុងការប្តូរលេខសម្ងាត់!'); }
 }
 
-// ទទួលពេលត្រូវបានគេ Kick ឬ Auto-Kick ពី Device ថ្មី
 socket.on('kicked-out', (reason) => {
   alert(`🚨 ${reason || 'គណនីរបស់អ្នកត្រូវបាន Admin បណ្តេញចេញដោយសារសកម្មភាពខុសប្រក្រតី!'}`);
-  if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
-  if (isScreenSharing) stopScreenShare();
-  if (isCameraOn && cameraStream) { cameraStream.getTracks().forEach(track => track.stop()); }
-  for (const [peerId, call] of Object.entries(peerCalls)) { call.close(); delete peerCalls[peerId]; }
-  if (myPeer) myPeer.destroy();
-  if (localStream) localStream.getTracks().forEach(track => track.stop());
-  socket.disconnect();
-  location.reload(); 
+  leaveRoom();
 });
 
 socket.on('receive-otp', (data) => {
@@ -181,11 +174,8 @@ async function login() {
     const data = await res.json();
 
     if (data.requires2FA) {
-      alert(data.message);
-      document.getElementById('otp-modal').classList.remove('hidden');
-      return;
+      alert(data.message); document.getElementById('otp-modal').classList.remove('hidden'); return;
     }
-
     if (!data.success) return alert(data.message);
     finalizeLogin(data);
   } catch (err) { alert('មានបញ្ហាក្នុងការ Login!'); }
@@ -197,7 +187,6 @@ async function verify2FA() {
   try {
     const res = await fetch('/api/verify-2fa', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...pendingLoginData, otp }) });
     const data = await res.json();
-
     if (!data.success) return alert(data.message);
     document.getElementById('otp-modal').classList.add('hidden');
     finalizeLogin(data);
@@ -246,7 +235,7 @@ socket.on('receive-private-message', (data) => {
   chatMsgs.scrollTop = chatMsgs.scrollHeight;
 });
 
-// ================= WEBRTC & PEERJS =================
+// ================= WEBRTC & PEERJS (DUAL CONNECTION FIX) =================
 function createActiveDummyVideoTrack() {
   const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 240;
   const ctx = canvas.getContext('2d'); let angle = 0;
@@ -271,39 +260,74 @@ async function startMeeting() {
   localStream = new MediaStream([audioTrack, createActiveDummyVideoTrack()]);
   localVideo.srcObject = localStream;
 
-  myPeer = new Peer(undefined, { host: location.hostname, port: location.port || (location.protocol === 'https:' ? 443 : 80), path: '/peerjs', secure: location.protocol === 'https:', config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] } });
+  const peerConfig = { host: location.hostname, port: location.port || (location.protocol === 'https:' ? 443 : 80), path: '/peerjs', secure: location.protocol === 'https:', config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } };
 
-  myPeer.on('open', (id) => {
-    myId = id; document.getElementById('room-container').classList.remove('hidden'); document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId}`;
-    socket.emit('join-room', currentRoomId, id, myUsername);
+  // បង្កើត Peer ចំនួន ២ ដាច់ពីគ្នា
+  myPeer = new Peer(myPeerId, peerConfig);
+  myScreenPeer = new Peer(myScreenPeerId, peerConfig);
+
+  // ពេលអ្នកផ្សេងហៅចូលមកកាន់កាមេរ៉ារបស់យើង
+  myPeer.on('call', (call) => {
+    call.answer(isCameraOn ? cameraStream : localStream); 
+    peerCalls[call.peer] = call; 
+    const callerName = call.metadata ? call.metadata.username : 'ដៃគូ';
+    addRemoteVideo(call.peer, callerName);
+    
+    call.on('stream', (remoteStream) => { 
+      const videoEl = document.getElementById(`video-${call.peer}`); 
+      if (videoEl) { videoEl.srcObject = remoteStream; updateConnectionStatus(call.peer, '🟢 Online'); } 
+    });
+    call.on('close', () => { delete peerCalls[call.peer]; updateConnectionStatus(call.peer, '🔴 Offline'); });
   });
 
-  myPeer.on('call', (call) => {
-    const callType = call.metadata ? call.metadata.type : 'camera'; const callerName = call.metadata ? call.metadata.username : 'ដៃគូ';
-    if (callType === 'screen') {
-      call.answer(); call.on('stream', (remoteScreenStream) => addRemoteScreenVideo(call.peer, remoteScreenStream, callerName)); call.on('close', () => removeRemoteScreenVideo(call.peer));
-    } else {
-      call.answer(isCameraOn ? cameraStream : localStream); peerCalls[call.peer] = call; addRemoteVideo(call.peer, callerName);
-      call.on('stream', (remoteStream) => { const videoEl = document.getElementById(`video-${call.peer}`); if (videoEl) { videoEl.srcObject = remoteStream; updateConnectionStatus(call.peer, '🟢 Online'); } });
-      call.on('close', () => { delete peerCalls[call.peer]; updateConnectionStatus(call.peer, '🔴 Offline'); });
-    }
+  // ពេលអ្នកផ្សេងបញ្ជូន Screen Share មកឱ្យយើង
+  myScreenPeer.on('call', (call) => {
+    call.answer(); // គ្រាន់តែទទួលយក មិនបាច់បញ្ជូនវីដេអូត្រឡប់ទៅវិញទេ
+    screenCalls[call.peer] = call;
+    const sharerName = call.metadata ? call.metadata.username : 'ដៃគូ';
+    
+    call.on('stream', (remoteScreenStream) => {
+      addRemoteScreenVideo(call.peer, remoteScreenStream, sharerName);
+    });
+    call.on('close', () => removeRemoteScreenVideo(call.peer));
+  });
+
+  myPeer.on('open', (id) => {
+    document.getElementById('room-container').classList.remove('hidden'); 
+    document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId}`;
+    socket.emit('join-room', currentRoomId, myPeerId, myUsername);
   });
 
   socket.on('existing-users', (users) => {
-    users.forEach((user, index) => { userNamesMap[user.peerId] = user.username; addRemoteVideo(user.peerId, user.username); setTimeout(() => connectToUser(user.peerId), (index + 1) * 500); });
+    users.forEach((user, index) => { 
+      userNamesMap[user.peerId] = user.username; 
+      addRemoteVideo(user.peerId, user.username); 
+      setTimeout(() => connectToUser(user.peerId), (index + 1) * 500); 
+    });
     updateUserCount(); updateChatUserList();
   });
 
   socket.on('user-joined', ({ peerId, username }) => {
-    if (peerId !== myId) {
-      userNamesMap[peerId] = username; addRemoteVideo(peerId, username); updateUserCount(); updateChatUserList();
-      if (isScreenSharing && screenStream) setTimeout(() => myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } }), 1200);
+    if (peerId !== myPeerId) {
+      userNamesMap[peerId] = username; 
+      addRemoteVideo(peerId, username); 
+      updateUserCount(); updateChatUserList();
+
+      // ប្រសិនបើយើងកំពុង Share Screen រួចហើយ ត្រូវបញ្ជូនទៅអ្នកថ្មីដែលទើបចូល
+      if (isScreenSharing && screenStream) {
+        setTimeout(() => {
+          const targetScreenId = peerId + '_screen';
+          const call = myScreenPeer.call(targetScreenId, screenStream, { metadata: { username: myUsername } });
+          screenCalls[peerId] = call;
+        }, 1200);
+      }
     }
   });
 
   socket.on('user-left', (peerId) => {
-    removeRemoteVideo(peerId); removeRemoteScreenVideo(peerId);
+    removeRemoteVideo(peerId); removeRemoteScreenVideo(peerId + '_screen');
     if (peerCalls[peerId]) { peerCalls[peerId].close(); delete peerCalls[peerId]; }
+    if (screenCalls[peerId]) { screenCalls[peerId].close(); delete screenCalls[peerId]; }
     delete userNamesMap[peerId]; updateUserCount(); updateChatUserList();
   });
 }
@@ -312,11 +336,15 @@ function connectToUser(peerId) {
   if (peerCalls[peerId]) return;
   const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
   try {
-    const call = myPeer.call(peerId, streamToSend, { metadata: { type: 'camera', username: myUsername } }); peerCalls[peerId] = call; updateConnectionStatus(peerId, '⏳ Connecting...');
-    call.on('stream', (remoteStream) => { const videoEl = document.getElementById(`video-${peerId}`); if (videoEl) { videoEl.srcObject = remoteStream; updateConnectionStatus(peerId, '🟢 Online'); } });
+    const call = myPeer.call(peerId, streamToSend, { metadata: { username: myUsername } }); 
+    peerCalls[peerId] = call; updateConnectionStatus(peerId, '⏳ Connecting...');
+    
+    call.on('stream', (remoteStream) => { 
+      const videoEl = document.getElementById(`video-${peerId}`); 
+      if (videoEl) { videoEl.srcObject = remoteStream; updateConnectionStatus(peerId, '🟢 Online'); } 
+    });
     call.on('close', () => { delete peerCalls[peerId]; updateConnectionStatus(peerId, '🔴 Offline'); });
     call.on('error', () => { delete peerCalls[peerId]; updateConnectionStatus(peerId, '🔴 Offline'); });
-    if (isScreenSharing && screenStream) myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } });
   } catch (err) { console.error('Error calling peer:', err); }
 }
 
@@ -365,21 +393,53 @@ async function toggleCamera() {
     } catch (err) { alert('មិនអាចបើកកាមេរ៉ាបានទេ: ' + err.message); }
   }
 }
-function replaceVideoTrackToPeers(newVideoTrack) { for (const [peerId, call] of Object.entries(peerCalls)) { const pc = call.peerConnection; if (!pc) continue; const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video'); if (videoSender && newVideoTrack) videoSender.replaceTrack(newVideoTrack); } }
+
+function replaceVideoTrackToPeers(newVideoTrack) { 
+  for (const [peerId, call] of Object.entries(peerCalls)) { 
+    const pc = call.peerConnection; if (!pc) continue; 
+    const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video'); 
+    if (videoSender && newVideoTrack) videoSender.replaceTrack(newVideoTrack); 
+  } 
+}
 
 async function toggleScreenShare() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return alert('⚠️ មុខងារ Share Screen អាចដំណើរការបានតែលើកុំព្យូទ័រ (Computer/Laptop) ប៉ុណ្ណោះ!');
-  if (isScreenSharing) { stopScreenShare(); } else {
+  if (isScreenSharing) { 
+    stopScreenShare(); 
+  } else {
     try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }); isScreenSharing = true; document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing'; document.getElementById('screenBtn').className = 'btn-danger';
-      addRemoteScreenVideo('my-local-screen', screenStream, myUsername + " (អ្នក)"); for (const peerId of Object.keys(peerCalls)) myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } }); screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }); 
+      isScreenSharing = true; 
+      document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing'; document.getElementById('screenBtn').className = 'btn-danger';
+      
+      addRemoteScreenVideo('my-local-screen', screenStream, myUsername + " (អ្នក)"); 
+      
+      // បញ្ជូន Screen ទៅកាន់គ្រប់សមាជិកដែលមានក្នុងបន្ទប់
+      for (const peerId of Object.keys(userNamesMap)) { 
+        if (peerId !== myPeerId) {
+          const targetScreenId = peerId + '_screen';
+          const call = myScreenPeer.call(targetScreenId, screenStream, { metadata: { username: myUsername } }); 
+          screenCalls[peerId] = call;
+        }
+      } 
+      screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
     } catch (err) {}
   }
 }
+
 function stopScreenShare() {
-  if (!isScreenSharing) return; isScreenSharing = false; document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen'; document.getElementById('screenBtn').className = 'btn-warning'; removeRemoteScreenVideo('my-local-screen');
+  if (!isScreenSharing) return; 
+  isScreenSharing = false; 
+  document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen'; document.getElementById('screenBtn').className = 'btn-warning'; 
+  removeRemoteScreenVideo('my-local-screen');
+  
+  for (const peerId of Object.keys(screenCalls)) { 
+    if(screenCalls[peerId]) screenCalls[peerId].close(); 
+    delete screenCalls[peerId]; 
+  }
   if (screenStream) { screenStream.getTracks().forEach(track => track.stop()); screenStream = null; }
 }
+
 function toggleMic() {
   const audioTrack = localStream.getAudioTracks()[0]; if (!audioTrack) return alert('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!');
   const micIcon = document.getElementById('micBtnIcon'); audioTrack.enabled = !audioTrack.enabled;
@@ -387,10 +447,26 @@ function toggleMic() {
 }
 
 function leaveRoom() {
-  if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame); if (isScreenSharing) stopScreenShare();
+  if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame); 
+  if (isScreenSharing) stopScreenShare();
   if (isCameraOn && cameraStream) { cameraStream.getTracks().forEach(track => track.stop()); cameraStream = null; isCameraOn = false; document.getElementById('camBtnIcon').innerHTML = '🚫'; document.getElementById('camBtnIcon').classList.add('off'); }
+  
   for (const [peerId, call] of Object.entries(peerCalls)) { call.close(); delete peerCalls[peerId]; }
-  if (myPeer) myPeer.destroy(); if (localStream) localStream.getTracks().forEach(track => track.stop()); socket.disconnect();
-  document.getElementById('room-container').classList.add('hidden'); document.getElementById('mainBody').style.justifyContent = 'center';
-  if (currentUserRole === 'admin') { document.getElementById('admin-dashboard').classList.remove('hidden'); socket.connect(); loadAdminRoomMonitor(); loadUsersTable(); } else { location.reload(); }
+  for (const [peerId, call] of Object.entries(screenCalls)) { call.close(); delete screenCalls[peerId]; }
+  
+  if (myPeer) myPeer.destroy(); 
+  if (myScreenPeer) myScreenPeer.destroy();
+  if (localStream) localStream.getTracks().forEach(track => track.stop()); 
+  socket.disconnect();
+
+  document.getElementById('room-container').classList.add('hidden'); 
+  document.getElementById('mainBody').style.justifyContent = 'center';
+  
+  if (currentUserRole === 'admin') { 
+    document.getElementById('admin-dashboard').classList.remove('hidden'); 
+    socket.connect(); 
+    loadAdminRoomMonitor(); loadUsersTable(); 
+  } else { 
+    location.reload(); 
+  }
 }
