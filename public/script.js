@@ -1,22 +1,26 @@
 const socket = io();
 let myPeer;
+let screenPeer; // PeerJS ដាច់ដោយឡែកសម្រាប់ Screen
 let myId = '';
 let myUsername = '';
 let currentUserRole = '';
 let currentRoomId = '';
 let localStream = null;
-const peerConnections = {};
+let cameraStream = null;
+let screenStream = null;
+
+const peerConnections = {};       // សម្រាប់ Voice & Camera
+const screenPeerConnections = {}; // សម្រាប់ Screen Share
 
 let isCameraOn = false;
 let isScreenSharing = false;
-let screenStream = null;
-let cameraStream = null;
 let dummyCanvasInterval = null;
 let allRoomsList = [];
 
 const localVideo = document.getElementById('localVideo');
-const remoteVideosContainer = document.getElementById('remoteVideos');
-const screenShareIndicator = document.getElementById('screenShareIndicator');
+const localScreenVideo = document.getElementById('localScreenVideo');
+const videoGrid = document.getElementById('videoGrid');
+const myScreenContainer = document.getElementById('myScreenContainer');
 
 function makeFullscreen(elem) {
   if (elem.requestFullscreen) elem.requestFullscreen();
@@ -24,6 +28,7 @@ function makeFullscreen(elem) {
 }
 
 localVideo.onclick = () => makeFullscreen(localVideo);
+localScreenVideo.onclick = () => makeFullscreen(localScreenVideo);
 
 function switchAdminTab(tab) {
   document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
@@ -195,7 +200,6 @@ async function editUserRoom(id, currentRoom) {
   }
 }
 
-// បង្កើត Dummy Media Stream ឱ្យមាន Animation ស្រាល ដើម្បីឱ្យ PeerJS មិនគាំង
 function createDummyMediaStream() {
   const canvas = document.createElement('canvas');
   canvas.width = 320;
@@ -219,12 +223,6 @@ function createDummyMediaStream() {
   audioTrack.enabled = false;
 
   return new MediaStream([videoTrack, audioTrack]);
-}
-
-function getCurrentActiveStream() {
-  if (isScreenSharing && screenStream) return screenStream;
-  if (isCameraOn && cameraStream) return cameraStream;
-  return localStream;
 }
 
 async function login() {
@@ -326,13 +324,34 @@ async function createNewRoom() {
   }
 }
 
+const PEER_CONFIG = {
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
+    ]
+  },
+  debug: 1
+};
+
+// ចាប់ផ្ដើមការប្រជុំ (Meeting)
 async function startMeeting() {
   try {
     const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     const dummy = createDummyMediaStream();
     localStream = new MediaStream([audioStream.getAudioTracks()[0], dummy.getVideoTracks()[0]]);
   } catch {
-    console.log('ដំណើរការដោយគ្មាន Mic');
     localStream = createDummyMediaStream();
   }
 
@@ -340,26 +359,8 @@ async function startMeeting() {
     localVideo.srcObject = localStream;
   }
 
-  myPeer = new Peer({
-    config: {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        }
-      ]
-    },
-    debug: 1
-  });
+  // 1. PeerJS ដើមសម្រាប់ Audio & Camera
+  myPeer = new Peer(PEER_CONFIG);
 
   myPeer.on('open', (id) => {
     myId = id;
@@ -371,11 +372,29 @@ async function startMeeting() {
 
   myPeer.on('call', (call) => handleIncomingCall(call));
 
+  // 2. PeerJS ទីពីរសម្រាប់ Screen Share (ID ភ្ជាប់ដោយ prefix screen-)
+  myPeer.on('open', () => {
+    screenPeer = new Peer('screen-' + myId, PEER_CONFIG);
+    screenPeer.on('call', (call) => {
+      // ទទួលយក Stream Screen ពីដៃគូ
+      call.answer();
+      call.on('stream', (remoteScreenStream) => {
+        const callerPeerId = call.peer.replace('screen-', '');
+        addRemoteScreenVideo(callerPeerId, remoteScreenStream);
+      });
+      call.on('close', () => {
+        const callerPeerId = call.peer.replace('screen-', '');
+        removeRemoteScreenVideo(callerPeerId);
+      });
+    });
+  });
+
+  // Socket Events
   socket.on('all-users', (users) => {
     users.forEach(user => {
       if (user.peerId !== myId) {
         addRemoteVideo(user.peerId, user.username);
-        setTimeout(() => connectToUser(user.peerId), 600);
+        setTimeout(() => connectToUser(user.peerId), 500);
       }
     });
     updateUserCount();
@@ -384,24 +403,30 @@ async function startMeeting() {
   socket.on('user-joined', ({ peerId, username }) => {
     if (peerId !== myId) {
       addRemoteVideo(peerId, username);
-      setTimeout(() => connectToUser(peerId), 600);
+      setTimeout(() => connectToUser(peerId), 500);
       updateUserCount();
     }
   });
 
   socket.on('user-left', (peerId) => {
     removeRemoteVideo(peerId);
+    removeRemoteScreenVideo(peerId);
     if (peerConnections[peerId]) {
       peerConnections[peerId].close();
       delete peerConnections[peerId];
+    }
+    if (screenPeerConnections[peerId]) {
+      screenPeerConnections[peerId].close();
+      delete screenPeerConnections[peerId];
     }
     updateUserCount();
   });
 }
 
+// តភ្ជាប់ Voice & Camera Call
 function connectToUser(peerId) {
   if (peerConnections[peerId]) return;
-  const streamToSend = getCurrentActiveStream();
+  const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
 
   try {
     const call = myPeer.call(peerId, streamToSend);
@@ -437,7 +462,7 @@ function handleIncomingCall(call) {
 
   peerConnections[peerId] = call;
   updateConnectionStatus(peerId, '⏳ Connecting...');
-  const streamToSend = getCurrentActiveStream();
+  const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
 
   try {
     call.answer(streamToSend);
@@ -479,6 +504,7 @@ function updateConnectionStatus(peerId, status) {
   }
 }
 
+// បង្កើតប្រអប់ Video សម្រាប់ដៃគូ (Camera Box)
 function addRemoteVideo(peerId, username) {
   if (document.getElementById(`video-container-${peerId}`)) return;
 
@@ -487,13 +513,13 @@ function addRemoteVideo(peerId, username) {
   container.id = `video-container-${peerId}`;
   
   container.innerHTML = `
-    <p style="margin-bottom:8px;"><strong>👤 ${username}</strong> 
+    <p style="margin-bottom:8px;"><strong>👤 ${username} (Camera)</strong> 
       <span id="status-${peerId}" style="color: #f59e0b;">⏳ Connecting...</span>
     </p>
     <video id="video-${peerId}" autoplay playsinline></video>
   `;
   
-  remoteVideosContainer.appendChild(container);
+  videoGrid.appendChild(container);
   
   const video = document.getElementById(`video-${peerId}`);
   if (video) {
@@ -506,13 +532,40 @@ function removeRemoteVideo(peerId) {
   if (container) container.remove();
 }
 
+// បង្កើតប្រអប់ Screen Share ដាច់ដោយឡែកសម្រាប់ដៃគូ (Screen Box)
+function addRemoteScreenVideo(peerId, stream) {
+  let screenContainer = document.getElementById(`screen-container-${peerId}`);
+  if (!screenContainer) {
+    screenContainer = document.createElement('div');
+    screenContainer.className = 'video-box screen-box';
+    screenContainer.id = `screen-container-${peerId}`;
+
+    screenContainer.innerHTML = `
+      <p style="margin-bottom:8px; font-weight:600; color:#f59e0b;">🖥️ អេក្រង់របស់ដៃគូ (Screen)</p>
+      <video id="screen-video-${peerId}" autoplay playsinline></video>
+    `;
+    videoGrid.appendChild(screenContainer);
+  }
+
+  const screenVideo = document.getElementById(`screen-video-${peerId}`);
+  if (screenVideo) {
+    screenVideo.srcObject = stream;
+    screenVideo.onclick = () => makeFullscreen(screenVideo);
+  }
+}
+
+function removeRemoteScreenVideo(peerId) {
+  const screenContainer = document.getElementById(`screen-container-${peerId}`);
+  if (screenContainer) screenContainer.remove();
+}
+
 function updateUserCount() {
   const count = Object.keys(peerConnections).length + 1;
   document.getElementById('welcome-text').innerText = 
     `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId} | អ្នកប្រើ: ${count}`;
 }
 
-// មុខងារ បើក/បិទ កាមេរ៉ា
+// មុខងារ បើក/បិទ កាមេរ៉ា (Camera)
 async function toggleCamera() {
   const camBtn = document.getElementById('camBtn');
   
@@ -530,8 +583,6 @@ async function toggleCamera() {
     replaceVideoTrackToPeers(dummyTrack);
   } else {
     try {
-      if (isScreenSharing) await stopScreenShare();
-
       cameraStream = await navigator.mediaDevices.getUserMedia({ 
         video: { width: { ideal: 640 }, height: { ideal: 480 } } 
       });
@@ -553,56 +604,6 @@ async function toggleCamera() {
   }
 }
 
-async function shareScreen() {
-  try {
-    if (isScreenSharing) {
-      await stopScreenShare();
-      return;
-    }
-
-    if (isCameraOn) await toggleCamera();
-
-    screenStream = await navigator.mediaDevices.getDisplayMedia({ 
-      video: true,
-      audio: true 
-    });
-
-    isScreenSharing = true;
-    document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing';
-    document.getElementById('screenBtn').classList.add('screen-share-active');
-    screenShareIndicator.style.display = 'block';
-
-    localVideo.srcObject = screenStream;
-    const screenTrack = screenStream.getVideoTracks()[0];
-
-    replaceVideoTrackToPeers(screenTrack);
-
-    screenTrack.onended = () => {
-      stopScreenShare();
-    };
-
-  } catch (err) {
-    console.error('❌ Error sharing screen:', err);
-    stopScreenShare();
-  }
-}
-
-async function stopScreenShare() {
-  isScreenSharing = false;
-  document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
-  document.getElementById('screenBtn').classList.remove('screen-share-active');
-  screenShareIndicator.style.display = 'none';
-
-  if (screenStream) {
-    screenStream.getTracks().forEach(track => track.stop());
-    screenStream = null;
-  }
-
-  const fallbackTrack = localStream.getVideoTracks()[0];
-  localVideo.srcObject = localStream;
-  replaceVideoTrackToPeers(fallbackTrack);
-}
-
 function replaceVideoTrackToPeers(newVideoTrack) {
   for (const [peerId, call] of Object.entries(peerConnections)) {
     const pc = call.peerConnection;
@@ -612,6 +613,54 @@ function replaceVideoTrackToPeers(newVideoTrack) {
     if (videoSender && newVideoTrack) {
       videoSender.replaceTrack(newVideoTrack);
     }
+  }
+}
+
+// មុខងារ Share Screen (បង្កើត Call ទី ២ ទៅកាន់ដៃគូទាំងអស់)
+async function toggleScreenShare() {
+  if (isScreenSharing) {
+    stopScreenShare();
+  } else {
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      isScreenSharing = true;
+
+      document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing';
+      document.getElementById('screenBtn').classList.add('btn-danger');
+      myScreenContainer.classList.remove('hidden');
+      localScreenVideo.srcObject = screenStream;
+
+      // Call ទៅកាន់ដៃគូទាំងអស់ដោយប្រើ screenPeer
+      for (const peerId of Object.keys(peerConnections)) {
+        const targetScreenPeerId = 'screen-' + peerId;
+        const call = screenPeer.call(targetScreenPeerId, screenStream);
+        screenPeerConnections[peerId] = call;
+      }
+
+      screenStream.getVideoTracks()[0].onended = () => {
+        stopScreenShare();
+      };
+    } catch (err) {
+      console.error('Error sharing screen:', err);
+    }
+  }
+}
+
+function stopScreenShare() {
+  isScreenSharing = false;
+  document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
+  document.getElementById('screenBtn').classList.remove('btn-danger');
+  document.getElementById('screenBtn').classList.add('btn-warning');
+  myScreenContainer.classList.add('hidden');
+
+  if (screenStream) {
+    screenStream.getTracks().forEach(track => track.stop());
+    screenStream = null;
+  }
+
+  for (const [peerId, call] of Object.entries(screenPeerConnections)) {
+    call.close();
+    delete screenPeerConnections[peerId];
   }
 }
 
@@ -632,7 +681,9 @@ function leaveRoom() {
     cameraStream.getTracks().forEach(track => track.stop());
   }
   for (const [peerId, call] of Object.entries(peerConnections)) call.close();
+  for (const [peerId, call] of Object.entries(screenPeerConnections)) call.close();
   if (myPeer) myPeer.destroy();
+  if (screenPeer) screenPeer.destroy();
   if (localStream) localStream.getTracks().forEach(track => track.stop());
   socket.disconnect();
 
