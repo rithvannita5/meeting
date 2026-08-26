@@ -1,6 +1,6 @@
 const socket = io();
 let myPeer;
-let screenPeer; // PeerJS ដាច់ដោយឡែកសម្រាប់ Screen
+let screenPeer;
 let myId = '';
 let myUsername = '';
 let currentUserRole = '';
@@ -9,12 +9,12 @@ let localStream = null;
 let cameraStream = null;
 let screenStream = null;
 
-const peerConnections = {};       // សម្រាប់ Voice & Camera
-const screenPeerConnections = {}; // សម្រាប់ Screen Share
+const peerConnections = {};
+const screenPeerConnections = {};
 
 let isCameraOn = false;
 let isScreenSharing = false;
-let dummyCanvasInterval = null;
+let dummyAnimFrame = null;
 let allRoomsList = [];
 
 const localVideo = document.getElementById('localVideo');
@@ -200,22 +200,32 @@ async function editUserRoom(id, currentRoom) {
   }
 }
 
-function createDummyMediaStream() {
+// បង្កើត Dummy Stream ដែលមាន Animation ចលនាពិតប្រាកដ (ទើប WebRTC ដំណើរការភ្លាម)
+function createActiveDummyMediaStream() {
   const canvas = document.createElement('canvas');
   canvas.width = 320;
   canvas.height = 240;
   const ctx = canvas.getContext('2d');
+  let angle = 0;
 
-  if (dummyCanvasInterval) clearInterval(dummyCanvasInterval);
-  dummyCanvasInterval = setInterval(() => {
+  function draw() {
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }, 1000);
+    
+    // គូសរង្វង់ចលនាស្រាលៗដើម្បីឱ្យ Browser ដឹងថាជា Video Live
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.arc(160 + Math.cos(angle) * 30, 120 + Math.sin(angle) * 20, 10, 0, Math.PI * 2);
+    ctx.fill();
+    angle += 0.05;
+    dummyAnimFrame = requestAnimationFrame(draw);
+  }
+  draw();
 
-  const videoStream = canvas.captureStream(5);
+  const videoStream = canvas.captureStream(15);
   const videoTrack = videoStream.getVideoTracks()[0];
 
-  const audioCtx = new AudioContext();
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const osc = audioCtx.createOscillator();
   const dst = osc.connect(audioCtx.createMediaStreamDestination());
   osc.start();
@@ -330,36 +340,25 @@ const PEER_CONFIG = {
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
-      {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      }
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' }
     ]
-  },
-  debug: 1
+  }
 };
 
-// ចាប់ផ្ដើមការប្រជុំ (Meeting)
 async function startMeeting() {
   try {
     const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    const dummy = createDummyMediaStream();
+    const dummy = createActiveDummyMediaStream();
     localStream = new MediaStream([audioStream.getAudioTracks()[0], dummy.getVideoTracks()[0]]);
   } catch {
-    localStream = createDummyMediaStream();
+    localStream = createActiveDummyMediaStream();
   }
 
   if (localStream) {
     localVideo.srcObject = localStream;
   }
 
-  // 1. PeerJS ដើមសម្រាប់ Audio & Camera
   myPeer = new Peer(PEER_CONFIG);
 
   myPeer.on('open', (id) => {
@@ -367,16 +366,10 @@ async function startMeeting() {
     document.getElementById('auth').classList.add('hidden');
     document.getElementById('room-container').classList.remove('hidden');
     document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId}`;
-    socket.emit('join-room', currentRoomId, id, myUsername);
-  });
-
-  myPeer.on('call', (call) => handleIncomingCall(call));
-
-  // 2. PeerJS ទីពីរសម្រាប់ Screen Share (ID ភ្ជាប់ដោយ prefix screen-)
-  myPeer.on('open', () => {
+    
+    // បង្កើត Peer ទី ២ សម្រាប់ Screen
     screenPeer = new Peer('screen-' + myId, PEER_CONFIG);
     screenPeer.on('call', (call) => {
-      // ទទួលយក Stream Screen ពីដៃគូ
       call.answer();
       call.on('stream', (remoteScreenStream) => {
         const callerPeerId = call.peer.replace('screen-', '');
@@ -387,14 +380,34 @@ async function startMeeting() {
         removeRemoteScreenVideo(callerPeerId);
       });
     });
+
+    socket.emit('join-room', currentRoomId, id, myUsername);
   });
 
-  // Socket Events
+  myPeer.on('call', (call) => {
+    const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
+    call.answer(streamToSend);
+    peerConnections[call.peer] = call;
+    
+    call.on('stream', (remoteStream) => {
+      const videoElement = document.getElementById(`video-${call.peer}`);
+      if (videoElement) {
+        videoElement.srcObject = remoteStream;
+        updateConnectionStatus(call.peer, '🟢 Online');
+      }
+    });
+
+    call.on('close', () => {
+      delete peerConnections[call.peer];
+      updateConnectionStatus(call.peer, '🔴 Offline');
+    });
+  });
+
   socket.on('all-users', (users) => {
     users.forEach(user => {
       if (user.peerId !== myId) {
         addRemoteVideo(user.peerId, user.username);
-        setTimeout(() => connectToUser(user.peerId), 500);
+        setTimeout(() => connectToUser(user.peerId), 1000);
       }
     });
     updateUserCount();
@@ -403,7 +416,6 @@ async function startMeeting() {
   socket.on('user-joined', ({ peerId, username }) => {
     if (peerId !== myId) {
       addRemoteVideo(peerId, username);
-      setTimeout(() => connectToUser(peerId), 500);
       updateUserCount();
     }
   });
@@ -423,7 +435,6 @@ async function startMeeting() {
   });
 }
 
-// តភ្ជាប់ Voice & Camera Call
 function connectToUser(peerId) {
   if (peerConnections[peerId]) return;
   const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
@@ -456,40 +467,6 @@ function connectToUser(peerId) {
   }
 }
 
-function handleIncomingCall(call) {
-  const peerId = call.peer;
-  if (peerConnections[peerId]) return;
-
-  peerConnections[peerId] = call;
-  updateConnectionStatus(peerId, '⏳ Connecting...');
-  const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
-
-  try {
-    call.answer(streamToSend);
-
-    call.on('stream', (remoteStream) => {
-      const videoElement = document.getElementById(`video-${peerId}`);
-      if (videoElement) {
-        videoElement.srcObject = remoteStream;
-        updateConnectionStatus(peerId, '🟢 Online');
-      }
-    });
-
-    call.on('close', () => {
-      delete peerConnections[peerId];
-      updateConnectionStatus(peerId, '🔴 Offline');
-    });
-
-    call.on('error', () => {
-      delete peerConnections[peerId];
-      updateConnectionStatus(peerId, '🔴 Offline');
-    });
-
-  } catch (err) {
-    console.error('❌ Error answering call:', err);
-  }
-}
-
 function updateConnectionStatus(peerId, status) {
   const statusElement = document.getElementById(`status-${peerId}`);
   if (statusElement) {
@@ -504,7 +481,6 @@ function updateConnectionStatus(peerId, status) {
   }
 }
 
-// បង្កើតប្រអប់ Video សម្រាប់ដៃគូ (Camera Box)
 function addRemoteVideo(peerId, username) {
   if (document.getElementById(`video-container-${peerId}`)) return;
 
@@ -532,7 +508,6 @@ function removeRemoteVideo(peerId) {
   if (container) container.remove();
 }
 
-// បង្កើតប្រអប់ Screen Share ដាច់ដោយឡែកសម្រាប់ដៃគូ (Screen Box)
 function addRemoteScreenVideo(peerId, stream) {
   let screenContainer = document.getElementById(`screen-container-${peerId}`);
   if (!screenContainer) {
@@ -565,7 +540,6 @@ function updateUserCount() {
     `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId} | អ្នកប្រើ: ${count}`;
 }
 
-// មុខងារ បើក/បិទ កាមេរ៉ា (Camera)
 async function toggleCamera() {
   const camBtn = document.getElementById('camBtn');
   
@@ -616,7 +590,6 @@ function replaceVideoTrackToPeers(newVideoTrack) {
   }
 }
 
-// មុខងារ Share Screen (បង្កើត Call ទី ២ ទៅកាន់ដៃគូទាំងអស់)
 async function toggleScreenShare() {
   if (isScreenSharing) {
     stopScreenShare();
@@ -630,7 +603,6 @@ async function toggleScreenShare() {
       myScreenContainer.classList.remove('hidden');
       localScreenVideo.srcObject = screenStream;
 
-      // Call ទៅកាន់ដៃគូទាំងអស់ដោយប្រើ screenPeer
       for (const peerId of Object.keys(peerConnections)) {
         const targetScreenPeerId = 'screen-' + peerId;
         const call = screenPeer.call(targetScreenPeerId, screenStream);
@@ -675,7 +647,7 @@ function toggleMic() {
 }
 
 function leaveRoom() {
-  if (dummyCanvasInterval) clearInterval(dummyCanvasInterval);
+  if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
   if (isScreenSharing) stopScreenShare();
   if (isCameraOn && cameraStream) {
     cameraStream.getTracks().forEach(track => track.stop());
