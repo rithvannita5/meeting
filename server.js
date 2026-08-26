@@ -1,11 +1,20 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const { ExpressPeerServer } = require('peer');
 const path = require('path');
 const mongoose = require('mongoose');
 
 const app = express();
 const server = http.createServer(app);
+
+// បង្កើត PeerServer ផ្ទាល់ខ្លួនលើ Server នេះតែម្តង (លែងដាច់ 5 នាទីទៀតហើយ)
+const peerServer = ExpressPeerServer(server, {
+  debug: true,
+  path: '/'
+});
+app.use('/peerjs', peerServer);
+
 const io = new Server(server, { 
   cors: { origin: "*" },
   transports: ['websocket', 'polling']
@@ -47,7 +56,6 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error('MongoDB Error:', err));
 
 const roomUsers = {};
-const roomScreenSharers = {}; // កត់ត្រាទុកអ្នកដែលកំពុងបើក Share Screen ក្នុងបន្ទប់នីមួយៗ
 
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
@@ -163,7 +171,6 @@ app.get('/api/rooms', async (req, res) => {
   }
 });
 
-// Socket Signaling Multi-Party
 io.on('connection', (socket) => {
   socket.on('join-room', (roomId, peerId, username) => {
     socket.join(roomId);
@@ -172,43 +179,19 @@ io.on('connection', (socket) => {
     socket.data.username = username;
     
     if (!roomUsers[roomId]) roomUsers[roomId] = [];
-    if (!roomScreenSharers[roomId]) roomScreenSharers[roomId] = [];
-
     roomUsers[roomId] = roomUsers[roomId].filter(u => u.peerId !== peerId && u.username !== username);
     
     const existingUsers = [...roomUsers[roomId]];
     roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
-    // ផ្ញើបញ្ជីអ្នកទាំងអស់ និងអ្នកដែលកំពុង Share Screen ទៅកាន់អ្នកចូលថ្មី
-    socket.emit('existing-users', {
-      users: existingUsers,
-      activeScreens: roomScreenSharers[roomId]
-    });
-    
+    socket.emit('existing-users', existingUsers);
     socket.to(roomId).emit('user-joined', { peerId, username });
-
-    // គ្រប់គ្រងស្ថានភាព Screen Share
-    socket.on('started-screen-sharing', () => {
-      if (!roomScreenSharers[roomId].includes(peerId)) {
-        roomScreenSharers[roomId].push(peerId);
-      }
-      socket.to(roomId).emit('user-started-screen', peerId);
-    });
-
-    socket.on('stopped-screen-sharing', () => {
-      roomScreenSharers[roomId] = roomScreenSharers[roomId].filter(id => id !== peerId);
-      socket.to(roomId).emit('user-stopped-screen', peerId);
-    });
 
     socket.on('disconnect', () => {
       if (roomUsers[roomId]) {
         roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
-        roomScreenSharers[roomId] = (roomScreenSharers[roomId] || []).filter(id => id !== socket.data.peerId);
         socket.to(roomId).emit('user-left', socket.data.peerId);
-        if (roomUsers[roomId].length === 0) {
-          delete roomUsers[roomId];
-          delete roomScreenSharers[roomId];
-        }
+        if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
       }
     });
   });
