@@ -2,7 +2,6 @@
 <html lang="km">
 <head>
   <meta charset="UTF-8">
-  <!-- បន្ថែម user-scalable=yes ដើម្បីឱ្យទូរស័ព្ទអាចយកដៃទាញពង្រីក (Zoom) បាន -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
   <title>ប្រព័ន្ធ Video Conference សុវត្ថិភាព</title>
   
@@ -18,14 +17,14 @@
     body { background-color: #0b132b; color: #fff; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 15px; }
     .hidden { display: none !important; }
 
-    /* Auth Box */
+    /* Login & Modal Box */
     .card { background: #1c2541; padding: 30px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); width: 100%; max-width: 400px; text-align: center; }
     .card h2 { margin-bottom: 25px; color: #48cae4; font-weight: 600; }
     .form-group { margin-bottom: 15px; text-align: left; }
     .form-group label { display: block; margin-bottom: 8px; font-size: 14px; color: #cbd5e1; }
     input, select { width: 100%; padding: 14px; border-radius: 8px; border: 1px solid #3a506b; background: #0b132b; color: #fff; font-size: 15px; outline: none; }
     input:focus, select:focus { border-color: #48cae4; }
-    button { cursor: pointer; border: none; padding: 14px 20px; border-radius: 8px; font-weight: bold; font-size: 15px; transition: 0.2s; }
+    button { cursor: pointer; border: none; padding: 14px 20px; border-radius: 8px; font-weight: bold; font-size: 15px; transition: 0.2s; font-family: 'Kantumruy Pro', sans-serif;}
     
     .btn-primary { background: #00b4d8; color: #fff; width: 100%; margin-top: 10px; }
     .btn-primary:hover { background: #0096c7; }
@@ -34,6 +33,8 @@
     .btn-danger { background: #ef4444; color: #fff; }
     .btn-secondary { background: #475569; color: #fff; }
 
+    #otp-modal { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; display:flex; justify-content:center; align-items:center; padding: 15px;}
+
     /* Room Layout */
     #room-container { width: 100%; max-width: 1600px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-height: 95vh; }
     .header-bar { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; background: #1c2541; padding: 15px 20px; border-radius: 10px; }
@@ -41,49 +42,29 @@
     
     .section-title { font-size: 16px; margin: 15px 0 10px 0; color: #94a3b8; width: 100%; text-align: left; border-bottom: 1px solid #334155; padding-bottom: 8px; }
     
-    /* ----------------------------------------------------
-       ការកំណត់ Grid អេក្រង់: ៥ ប្រអប់ក្នុង ១ ជួរ និងទំហំប៉ុនគ្នា
-    ------------------------------------------------------- */
-    .grid-section { 
-      display: grid; 
-      grid-template-columns: repeat(5, 1fr); /* កំណត់ ៥ ប្រអប់ស្មើៗគ្នាក្នុង ១ ជួរ */
-      gap: 15px; 
-      width: 100%; 
-      margin-bottom: 25px; 
-    }
-    
-    /* ផ្ទាំងវីដេអូ និង Screen Share មានទំហំប៉ុនគ្នាទាំងអស់ */
-    .video-box { 
-      position: relative; 
-      width: 100%; 
-      aspect-ratio: 4/3; /* រក្សារាងចតុកោណកែងស្មើគ្នា */
-      border-radius: 12px; 
-      overflow: hidden; 
-      background: #000; 
-      border: 2px solid #334155; 
-      box-shadow: 0 4px 10px rgba(0,0,0,0.5); 
-      display: flex; 
-      align-items: center; 
-      justify-content: center;
-      cursor: pointer; /* បង្ហាញសញ្ញាដៃ អាចចុចឱ្យធំបាន */
-    }
-    
-    /* ពណ៌ស៊ុមសម្រាប់ Screen Share ឱ្យប្លែកពី Camera */
+    /* 5 ក្នុង១ជួរ និងទំហំប៉ុនគ្នា */
+    .grid-section { display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; width: 100%; margin-bottom: 25px; }
+    .video-box { position: relative; width: 100%; aspect-ratio: 4/3; border-radius: 12px; overflow: hidden; background: #000; border: 2px solid #334155; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; cursor: pointer; }
     .screen-box { border-color: #f59e0b; }
     
     .video-box video { width: 100%; height: 100%; object-fit: cover; }
-    /* Screen Share ប្រើ contain ដើម្បីកុំឱ្យដាច់សងខាង */
     .screen-box video { object-fit: contain; }
 
-    /* ឈ្មោះ និងស្ថានភាព */
     .name-tag { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #fff; padding: 5px 10px; border-radius: 6px; font-size: 12px; z-index: 5; }
     .status-tag { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 6px; font-size: 11px; z-index: 5; }
     
-    /* Icon Control Buttons អណ្តែតលើវីដេអូ */
     .floating-controls { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 50; background: rgba(0,0,0,0.7); padding: 8px 18px; border-radius: 30px; }
     .float-btn { background: #334155; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
     .float-btn:hover { background: #475569; }
     .float-btn.off { background: #ef4444; }
+
+    /* Private Chat */
+    #chat-panel { position: fixed; bottom: 20px; right: 20px; width: 320px; background: #1c2541; border: 1px solid #48cae4; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.5); z-index: 100; display: flex; flex-direction: column; overflow: hidden; }
+    .chat-header { background: #48cae4; color: #000; padding: 12px; font-weight: bold; display: flex; justify-content: space-between; cursor: pointer; }
+    #chat-messages { height: 250px; overflow-y: auto; padding: 10px; background: #0b132b; font-size: 14px; }
+    .msg-item { margin-bottom: 8px; padding: 8px; border-radius: 8px; background: #334155; word-wrap: break-word; }
+    .msg-item.me { background: #10b981; text-align: right; margin-left: 20px; }
+    .chat-input-area { padding: 10px; display: flex; flex-direction: column; gap: 5px; }
 
     /* Admin Dashboard */
     #admin-dashboard { width: 100%; max-width: 1200px; justify-content: flex-start; align-items: flex-start; min-height: 95vh; }
@@ -100,22 +81,18 @@
     .room-card { background: #0b132b; border: 1px solid #334155; padding: 20px; border-radius: 8px; width: 100%; max-width: 300px; }
     .room-card.live { border-color: #10b981; }
 
-    /* ----------------------------------------------------
-       ទូរស័ព្ទ Responsive ឱ្យលោតតម្រៀបគ្នាបានស្អាត
-    ------------------------------------------------------- */
+    /* Responsive */
     @media (max-width: 1200px) { .grid-section { grid-template-columns: repeat(4, 1fr); } }
     @media (max-width: 992px) { .grid-section { grid-template-columns: repeat(3, 1fr); } }
     @media (max-width: 768px) { 
-      .grid-section { grid-template-columns: repeat(2, 1fr); } /* ២ ប្រអប់ក្នុង ១ជួរ លើទូរស័ព្ទផ្ដេក */
+      .grid-section { grid-template-columns: repeat(2, 1fr); } 
       body { align-items: flex-start; justify-content: flex-start; }
       .card { margin-top: 20px; }
       #room-container, #admin-dashboard { padding-top: 10px; }
       .header-bar { flex-direction: column; align-items: flex-start; }
-      .top-actions { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
+      .top-actions { width: 100%; justify-content: flex-start; }
     }
-    @media (max-width: 480px) {
-      .grid-section { grid-template-columns: repeat(1, 1fr); } /* ១ ប្រអប់ក្នុង ១ជួរ លើទូរស័ព្ទបញ្ឈរ */
-    }
+    @media (max-width: 480px) { .grid-section { grid-template-columns: repeat(1, 1fr); } }
   </style>
 </head>
 <body id="mainBody">
@@ -123,19 +100,21 @@
   <!-- ផ្ទាំង Login -->
   <div id="auth" class="card">
     <h2>🚪 ចូលបន្ទប់ Meeting</h2>
-    <div class="form-group">
-      <label>ឈ្មោះគណនី (Username)</label>
-      <input type="text" id="username" placeholder="ឧ. admin, rith...">
-    </div>
-    <div class="form-group">
-      <label>លេខសម្ងាត់ (Password)</label>
-      <input type="password" id="password" placeholder="បញ្ចូល Password">
-    </div>
-    <div class="form-group">
-      <label>ជ្រើសរើសបន្ទប់</label>
-      <select id="roomSelect"></select>
-    </div>
+    <div class="form-group"><label>ឈ្មោះគណនី (Username)</label><input type="text" id="username" placeholder="ឧ. admin, rith..."></div>
+    <div class="form-group"><label>លេខសម្ងាត់ (Password)</label><input type="password" id="password" placeholder="បញ្ចូល Password"></div>
+    <div class="form-group"><label>ជ្រើសរើសបន្ទប់</label><select id="roomSelect"></select></div>
     <button class="btn-primary" onclick="login()">ចូលរួមបន្ទប់</button>
+  </div>
+
+  <!-- ផ្ទាំង 2FA OTP (លាក់បាំង) -->
+  <div id="otp-modal" class="hidden">
+    <div class="card" style="border: 2px solid #f59e0b;">
+      <h2 style="color:#f59e0b;">🔐 ផ្ទៀងផ្ទាត់ 2FA</h2>
+      <p style="margin-bottom:15px; font-size:14px;">លេខកូដត្រូវបានផ្ញើទៅកាន់ឧបករណ៍ទី១ របស់អ្នក។</p>
+      <input type="text" id="otpInput" placeholder="បញ្ចូលលេខកូដ ៦ ខ្ទង់" style="text-align:center; font-size:20px; letter-spacing:5px;">
+      <button class="btn-success" style="width:100%; margin-top:15px;" onclick="verify2FA()">បញ្ជាក់ចូលរួម</button>
+      <button class="btn-danger" style="width:100%; margin-top:10px;" onclick="cancel2FA()">បោះបង់</button>
+    </div>
   </div>
 
   <!-- ផ្ទាំង Admin Dashboard -->
@@ -156,13 +135,7 @@
       <div id="tab-users" class="tab-pane hidden">
         <table>
           <thead>
-            <tr>
-              <th>Username</th>
-              <th>Role</th>
-              <th>បន្ទប់កំណត់</th>
-              <th>ស្ថានភាព</th>
-              <th>សកម្មភាព</th>
-            </tr>
+            <tr><th>Username</th><th>Role</th><th>បន្ទប់កំណត់</th><th>ស្ថានភាព</th><th>សកម្មភាព</th></tr>
           </thead>
           <tbody id="userTableBody"></tbody>
         </table>
@@ -171,22 +144,14 @@
         <div style="display:flex; gap:30px; flex-wrap:wrap;">
           <div style="flex:1; min-width:280px;">
             <h3>➕ បង្កើត User ថ្មី</h3>
-            <div class="form-group" style="margin-top:10px;">
-              <input type="text" id="newUsername" placeholder="Username">
-            </div>
-            <div class="form-group">
-              <input type="password" id="newPassword" placeholder="Password">
-            </div>
-            <div class="form-group">
-              <select id="userAssignedRoomSelect"></select>
-            </div>
+            <div class="form-group" style="margin-top:10px;"><input type="text" id="newUsername" placeholder="Username"></div>
+            <div class="form-group"><input type="password" id="newPassword" placeholder="Password"></div>
+            <div class="form-group"><select id="userAssignedRoomSelect"></select></div>
             <button class="btn-success" onclick="createNewUser()">បង្កើត User</button>
           </div>
           <div style="flex:1; min-width:280px;">
             <h3>➕ បង្កើតបន្ទប់ថ្មី</h3>
-            <div class="form-group" style="margin-top:10px;">
-              <input type="text" id="newRoomId" placeholder="ឧ. room-3">
-            </div>
+            <div class="form-group" style="margin-top:10px;"><input type="text" id="newRoomId" placeholder="ឧ. room-3"></div>
             <button class="btn-primary" onclick="createNewRoom()">បង្កើតបន្ទប់</button>
           </div>
         </div>
@@ -199,27 +164,44 @@
     <div class="header-bar">
       <h3 id="welcome-text">👋 សួស្តី...</h3>
       <div class="top-actions">
+        <button class="btn-primary" onclick="toggleChat()">💬 ផ្ញើសារ Private</button>
         <button id="screenBtn" class="btn-warning" onclick="toggleScreenShare()">🖥️ Share Screen</button>
         <button class="btn-secondary" onclick="changeMyPassword()">🔑 ប្តូរ Password</button>
         <button class="btn-danger" onclick="leaveRoom()">🚪 ចាកចេញពីបន្ទប់</button>
       </div>
     </div>
 
-    <!-- ទីតាំង Screen Share នឹងចេញតម្រៀប ៥ ក្នុង១ជួរ ទំហំប៉ុនកាមេរ៉ា -->
-    <h4 class="section-title" id="screenTitle" style="display:none; color:#f59e0b;">🖥️ ផ្ទាំង Screen Share (ចុចលើវីដេអូ ដើម្បីមើលពេញអេក្រង់ធំ)</h4>
+    <!-- Screen Share Grid -->
+    <h4 class="section-title" id="screenTitle" style="display:none; color:#f59e0b;">🖥️ ផ្ទាំង Screen Share (ចុចលើវីដេអូដើម្បីមើលពេញអេក្រង់)</h4>
     <div id="screenGrid" class="grid-section"></div>
 
-    <h4 class="section-title" style="color:#10b981;">👤 ផ្ទាំង Camera & Participants</h4>
+    <!-- Camera Grid -->
+    <h4 class="section-title" style="color:#10b981;">👤 ផ្ទាំង Camera & Participants (ចុចលើវីដេអូដើម្បីមើលពេញអេក្រង់)</h4>
     <div id="videoGrid" class="grid-section">
-      <!-- ផ្ទាំងកាមេរ៉ារបស់ខ្លួនឯង -->
       <div class="video-box" id="myVideoContainer">
         <div class="name-tag">👤 អ្នក (Me)</div>
-        <video id="localVideo" autoplay playsinline muted title="ចុចដើម្បីមើលពេញអេក្រង់ធំ"></video>
-        <!-- Floating Mic / Camera Icons -->
+        <video id="localVideo" autoplay playsinline muted title="ចុចដើម្បីមើលពេញអេក្រង់"></video>
         <div class="floating-controls">
           <button id="micBtnIcon" onclick="toggleMic()" class="float-btn" title="បិទ/បើក មេក្រូ">🎤</button>
           <button id="camBtnIcon" onclick="toggleCamera()" class="float-btn off" title="បិទ/បើក កាមេរ៉ា">🚫</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Private Chat Panel -->
+  <div id="chat-panel" class="hidden">
+    <div class="chat-header" onclick="toggleChat()">
+      <span>💬 ផ្ញើសារសម្ងាត់ (Private)</span> <span>▼</span>
+    </div>
+    <div id="chat-messages"></div>
+    <div class="chat-input-area">
+      <select id="chatRecipientSelect" style="padding: 8px;">
+        <option value="">-- ជ្រើសរើសអ្នកទទួល --</option>
+      </select>
+      <div style="display:flex; gap:5px;">
+        <input type="text" id="chatInput" placeholder="វាយសារទីនេះ..." style="padding:8px;">
+        <button class="btn-success" style="padding:8px;" onclick="sendPrivateMsg()">ផ្ញើ</button>
       </div>
     </div>
   </div>
