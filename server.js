@@ -13,13 +13,10 @@ const io = new Server(server, {
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-
-// Ignore favicon error
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://rithvannita5_db_user:81Aokzd93Q9Vu3Xb@cluster0.oaj62a4.mongodb.net/meetingDB?retryWrites=true&w=majority&appName=Cluster0";
 
-// MongoDB Schemas & Models
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
@@ -37,7 +34,7 @@ const Room = mongoose.model('Room', roomSchema);
 
 mongoose.connect(MONGO_URI)
   .then(async () => {
-    console.log(' Connected to MongoDB Atlas!');
+    console.log('✅ Connected to MongoDB Atlas!');
     const adminExists = await User.findOne({ username: 'admin' });
     if (!adminExists) {
       await User.create({ username: 'admin', password: '123', role: 'admin', assignedRoom: 'all', isBlocked: false });
@@ -47,11 +44,10 @@ mongoose.connect(MONGO_URI)
     const defaultRoom2 = await Room.findOne({ roomId: 'room-2' });
     if (!defaultRoom2) await Room.create({ roomId: 'room-2' });
   })
-  .catch(err => console.error(' MongoDB Connection Error:', err));
+  .catch(err => console.error('MongoDB Error:', err));
 
 const roomUsers = {};
 
-// API Login
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
   try {
@@ -67,7 +63,6 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// API Users
 app.get('/api/users', async (req, res) => {
   try {
     const users = await User.find({}, '-password');
@@ -84,7 +79,7 @@ app.post('/api/create-user', async (req, res) => {
     const exists = await User.findOne({ username });
     if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
     await User.create({ username, password, assignedRoom });
-    res.json({ success: true, message: `បង្កើត User ជោគជ័យ!` });
+    res.json({ success: true, message: 'បង្កើត User ជោគជ័យ!' });
   } catch (err) {
     res.status(500).json({ message: 'Error creating user' });
   }
@@ -167,7 +162,6 @@ app.get('/api/rooms', async (req, res) => {
   }
 });
 
-// Socket.io Realtime Signaling
 io.on('connection', (socket) => {
   socket.on('join-room', (roomId, peerId, username) => {
     socket.join(roomId);
@@ -176,14 +170,12 @@ io.on('connection', (socket) => {
     socket.data.username = username;
     
     if (!roomUsers[roomId]) roomUsers[roomId] = [];
-    roomUsers[roomId] = roomUsers[roomId].filter(u => u.peerId !== peerId);
+    // លុប User ចាស់ដែលប្រើ PeerId ឬ Username ដូចគ្នាដើម្បីកុំឱ្យជាប់ Session ចាស់
+    roomUsers[roomId] = roomUsers[roomId].filter(u => u.peerId !== peerId && u.username !== username);
     roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
-    // ផ្ញើបញ្ជីអ្នកនៅក្នុងបន្ទប់ស្រាប់ទៅកាន់អ្នកទើបចូលថ្មី
     const existingUsers = roomUsers[roomId].filter(u => u.peerId !== peerId);
     socket.emit('existing-users', existingUsers);
-    
-    // ប្រាប់អ្នកចាស់ថាមានសមាជិកថ្មីចូលមក (ឱ្យអ្នកចាស់ជាអ្នក Call ទៅអ្នកថ្មី)
     socket.to(roomId).emit('user-joined', { peerId, username });
 
     socket.on('disconnect', () => {
