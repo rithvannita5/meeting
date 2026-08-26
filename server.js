@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
@@ -13,18 +14,41 @@ const io = new Server(server, {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ទិន្នន័យ User
-let users = [
-  { id: 1, username: 'admin', password: '123', role: 'admin', assignedRoom: 'all', isBlocked: false }
-];
+const DATA_FILE = path.join(__dirname, 'data.json');
 
-const rooms = ['room-1', 'room-2'];
+// អានទិន្នន័យពី JSON File បើគ្មានបង្កើតថ្មី
+function loadData() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, 'utf8');
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.error('Error reading data.json:', err);
+  }
+  return {
+    users: [
+      { id: 1, username: 'admin', password: '123', role: 'admin', assignedRoom: 'all', isBlocked: false }
+    ],
+    rooms: ['room-1', 'room-2']
+  };
+}
+
+function saveData(data) {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('Error saving data.json:', err);
+  }
+}
+
+let db = loadData();
 const roomUsers = {};
 
 // API Login
 app.post('/api/login', (req, res) => {
   const { username, password, roomId } = req.body;
-  const user = users.find(u => u.username === username && u.password === password);
+  const user = db.users.find(u => u.username === username && u.password === password);
   
   if (!user) {
     return res.status(401).json({ success: false, message: 'ឈ្មោះ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ!' });
@@ -52,9 +76,9 @@ app.post('/api/login', (req, res) => {
   });
 });
 
-// API ទាញយកបញ្ជី User ទាំងអស់សម្រាប់ Admin
+// API យកបញ្ជី User
 app.get('/api/users', (req, res) => {
-  const safeUsers = users.map(u => ({
+  const safeUsers = db.users.map(u => ({
     id: u.id,
     username: u.username,
     role: u.role,
@@ -64,37 +88,37 @@ app.get('/api/users', (req, res) => {
   res.json({ users: safeUsers });
 });
 
-// API Admin បង្កើត User
+// API បង្កើត User
 app.post('/api/create-user', (req, res) => {
   const { username, password, assignedRoom } = req.body;
   if (!username || !password || !assignedRoom) {
     return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់!' });
   }
   
-  const exists = users.find(u => u.username === username);
+  const exists = db.users.find(u => u.username === username);
   if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
 
-  const newUser = {
+  db.users.push({
     id: Date.now(),
     username,
     password,
     role: 'member',
     assignedRoom,
     isBlocked: false
-  };
-
-  users.push(newUser);
+  });
+  saveData(db);
   res.json({ success: true, message: `បង្កើត User ជោគជ័យ សម្រាប់បន្ទប់ ${assignedRoom}!` });
 });
 
 // API លុប User
 app.delete('/api/users/:id', (req, res) => {
   const id = parseInt(req.params.id);
-  const user = users.find(u => u.id === id);
+  const user = db.users.find(u => u.id === id);
   if (user && user.role === 'admin') {
     return res.status(400).json({ message: 'មិនអាចលុបគណនី Admin បានទេ!' });
   }
-  users = users.filter(u => u.id !== id);
+  db.users = db.users.filter(u => u.id !== id);
+  saveData(db);
   res.json({ success: true, message: 'លុប User រួចរាល់!' });
 });
 
@@ -102,21 +126,23 @@ app.delete('/api/users/:id', (req, res) => {
 app.put('/api/users/:id/reset-password', (req, res) => {
   const id = parseInt(req.params.id);
   const { newPassword } = req.body;
-  const user = users.find(u => u.id === id);
+  const user = db.users.find(u => u.id === id);
   if (!user) return res.status(404).json({ message: 'រកមិនឃើញ User ទេ!' });
 
   user.password = newPassword;
+  saveData(db);
   res.json({ success: true, message: `ប្តូរ Password របស់ ${user.username} ជោគជ័យ!` });
 });
 
 // API Block / Unblock User
 app.put('/api/users/:id/toggle-block', (req, res) => {
   const id = parseInt(req.params.id);
-  const user = users.find(u => u.id === id);
+  const user = db.users.find(u => u.id === id);
   if (!user) return res.status(404).json({ message: 'រកមិនឃើញ User ទេ!' });
   if (user.role === 'admin') return res.status(400).json({ message: 'មិនអាច Block Admin បានទេ!' });
 
   user.isBlocked = !user.isBlocked;
+  saveData(db);
   res.json({ 
     success: true, 
     message: `${user.isBlocked ? 'បានផ្អាក (Blocked)' : 'បានបើកដំណើរការ (Unblocked)'} User ${user.username} រួចរាល់!`,
@@ -124,33 +150,35 @@ app.put('/api/users/:id/toggle-block', (req, res) => {
   });
 });
 
-// API កែប្រែបន្ទប់របស់ User
+// API Edit Room
 app.put('/api/users/:id/edit-room', (req, res) => {
   const id = parseInt(req.params.id);
   const { newRoom } = req.body;
-  const user = users.find(u => u.id === id);
+  const user = db.users.find(u => u.id === id);
   if (!user) return res.status(404).json({ message: 'រកមិនឃើញ User ទេ!' });
 
   user.assignedRoom = newRoom;
+  saveData(db);
   res.json({ success: true, message: `បានប្តូរបន្ទប់របស់ ${user.username} ទៅ ${newRoom} រួចរាល់!` });
 });
 
-// API Admin បង្កើតបន្ទប់ថ្មី
+// API បង្កើតបន្ទប់
 app.post('/api/create-room', (req, res) => {
   const { roomId } = req.body;
   if (!roomId) return res.status(400).json({ message: 'សូមបញ្ចូលឈ្មោះបន្ទប់!' });
 
-  if (rooms.includes(roomId)) {
+  if (db.rooms.includes(roomId)) {
     return res.status(400).json({ message: 'បន្ទប់នេះមានរួចហើយ!' });
   }
 
-  rooms.push(roomId);
-  res.json({ success: true, message: 'បង្កើតបន្ទប់ជោគជ័យ!', rooms });
+  db.rooms.push(roomId);
+  saveData(db);
+  res.json({ success: true, message: 'បង្កើតបន្ទប់ជោគជ័យ!', rooms: db.rooms });
 });
 
 // API យកបន្ទប់សកម្ម
 app.get('/api/rooms-status', (req, res) => {
-  const roomsData = rooms.map(r => {
+  const roomsData = db.rooms.map(r => {
     const activeMembers = roomUsers[r] ? roomUsers[r].length : 0;
     return {
       roomId: r,
@@ -162,7 +190,7 @@ app.get('/api/rooms-status', (req, res) => {
 });
 
 app.get('/api/rooms', (req, res) => {
-  res.json({ rooms });
+  res.json({ rooms: db.rooms });
 });
 
 // Socket.io
