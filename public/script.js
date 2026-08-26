@@ -17,9 +17,8 @@ let dummyAnimFrame = null;
 let allRoomsList = [];
 
 const localVideo = document.getElementById('localVideo');
-const localScreenVideo = document.getElementById('localScreenVideo');
+const screenGrid = document.getElementById('screenGrid');
 const videoGrid = document.getElementById('videoGrid');
-const myScreenContainer = document.getElementById('myScreenContainer');
 
 function makeFullscreen(elem) {
   if (elem.requestFullscreen) elem.requestFullscreen();
@@ -27,22 +26,21 @@ function makeFullscreen(elem) {
 }
 
 localVideo.onclick = () => makeFullscreen(localVideo);
-localScreenVideo.onclick = () => makeFullscreen(localScreenVideo);
 
 function switchAdminTab(tab) {
-  document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('hidden'));
   document.querySelectorAll('.nav-tabs button').forEach(el => el.classList.remove('active'));
 
   if (tab === 'rooms') {
-    document.getElementById('tab-rooms').classList.add('active');
+    document.getElementById('tab-rooms').classList.remove('hidden');
     document.getElementById('tabBtnRooms').classList.add('active');
     loadAdminRoomMonitor();
   } else if (tab === 'users') {
-    document.getElementById('tab-users').classList.add('active');
+    document.getElementById('tab-users').classList.remove('hidden');
     document.getElementById('tabBtnUsers').classList.add('active');
     loadUsersTable();
   } else if (tab === 'newRoom') {
-    document.getElementById('tab-newRoom').classList.add('active');
+    document.getElementById('tab-newRoom').classList.remove('hidden');
     document.getElementById('tabBtnNewRoom').classList.add('active');
   }
 }
@@ -199,6 +197,82 @@ async function editUserRoom(id, currentRoom) {
   }
 }
 
+async function createNewUser() {
+  const username = document.getElementById('newUsername').value.trim();
+  const password = document.getElementById('newPassword').value.trim();
+  const assignedRoom = document.getElementById('userAssignedRoomSelect').value;
+
+  if (!username || !password) return alert('សូមបំពេញព័ត៌មាន!');
+
+  try {
+    const res = await fetch('/api/create-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, assignedRoom })
+    });
+    const data = await res.json();
+    alert(data.message);
+
+    if (data.success) {
+      document.getElementById('newUsername').value = '';
+      document.getElementById('newPassword').value = '';
+      await loadUsersTable();
+    }
+  } catch (err) {
+    console.error('Error creating user:', err);
+  }
+}
+
+async function createNewRoom() {
+  const roomId = document.getElementById('newRoomId').value.trim();
+  if (!roomId) return alert('សូមបញ្ចូលឈ្មោះបន្ទប់!');
+
+  try {
+    const res = await fetch('/api/create-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId })
+    });
+    const data = await res.json();
+    alert(data.message);
+
+    if (data.success) {
+      document.getElementById('newRoomId').value = '';
+      await loadRooms();
+      if (currentUserRole === 'admin') loadAdminRoomMonitor();
+    }
+  } catch (err) {
+    console.error('Error creating room:', err);
+  }
+}
+
+// មុខងារ User ប្តូរ Password ផ្ទាល់ខ្លួន
+async function changeMyPassword() {
+  const oldPwd = prompt('🔑 សូមបញ្ចូលលេខសម្ងាត់ចាស់របស់អ្នក:');
+  if (!oldPwd) return;
+  const newPwd = prompt('🔒 សូមបញ្ចូលលេខសម្ងាត់ថ្មី:');
+  if (!newPwd) return;
+
+  try {
+    const res = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: myUsername, oldPassword: oldPwd, newPassword: newPwd })
+    });
+    const data = await res.json();
+    alert(data.message);
+  } catch (err) {
+    alert('មានបញ្ហាក្នុងការប្តូរលេខសម្ងាត់!');
+  }
+}
+
+// ទទួលការ Alert ពី Server ប្រសិនបើមាន Multi-Device Login (សម្រាប់តែ Admin)
+socket.on('admin-alert', (data) => {
+  if (currentUserRole === 'admin') {
+    alert(`🚨 សេចក្តីប្រកាសអាសន្នសុវត្ថិភាព!\n\nUser ឈ្មោះ "${data.username}" កំពុង Login លើឧបករណ៍ចំនួន ${data.count} ក្នុងពេលតែមួយ!`);
+  }
+});
+
 function createActiveDummyVideoTrack() {
   const canvas = document.createElement('canvas');
   canvas.width = 320;
@@ -276,13 +350,15 @@ async function startMeeting() {
     osc.start();
     audioTrack = dst.stream.getAudioTracks()[0];
     audioTrack.enabled = false;
+    document.getElementById('micBtnIcon').innerHTML = '🔇';
+    document.getElementById('micBtnIcon').classList.add('off');
   }
 
   const dummyVideoTrack = createActiveDummyVideoTrack();
   localStream = new MediaStream([audioTrack, dummyVideoTrack]);
   localVideo.srcObject = localStream;
 
-  // ភ្ជាប់ទៅកាន់ PeerServer លើ Render ផ្ទាល់ខ្លួន
+  // តភ្ជាប់ទៅកាន់ PeerServer លើ Render ផ្ទាល់
   myPeer = new Peer(undefined, {
     host: location.hostname,
     port: location.port || (location.protocol === 'https:' ? 443 : 80),
@@ -306,7 +382,7 @@ async function startMeeting() {
     socket.emit('join-room', currentRoomId, id, myUsername);
   });
 
-  // ទទួលការ Call ចូល
+  // ទទួលការ Call ពីសមាជិកដទៃ
   myPeer.on('call', (call) => {
     const callType = call.metadata ? call.metadata.type : 'camera';
     const callerName = call.metadata ? call.metadata.username : 'ដៃគូ';
@@ -314,7 +390,7 @@ async function startMeeting() {
     if (callType === 'screen') {
       call.answer();
       call.on('stream', (remoteScreenStream) => {
-        addRemoteScreenVideo(call.peer, remoteScreenStream);
+        addRemoteScreenVideo(call.peer, remoteScreenStream, callerName);
       });
       call.on('close', () => removeRemoteScreenVideo(call.peer));
     } else {
@@ -356,10 +432,10 @@ async function startMeeting() {
       addRemoteVideo(peerId, username);
       updateUserCount();
 
-      // ប្រសិនបើយើងកំពុងបើក Screen Share បញ្ជូន Screen ទៅកាន់អ្នកថ្មីភ្លាម
+      // បើយើងកំពុង Share Screen បញ្ជូន Screen ទៅឱ្យអ្នកថ្មីភ្លាម
       if (isScreenSharing && screenStream) {
         setTimeout(() => {
-          myPeer.call(peerId, screenStream, { metadata: { type: 'screen' } });
+          myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } });
         }, 1200);
       }
     }
@@ -404,7 +480,7 @@ function connectToUser(peerId, username) {
     });
 
     if (isScreenSharing && screenStream) {
-      myPeer.call(peerId, screenStream, { metadata: { type: 'screen' } });
+      myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } });
     }
 
   } catch (err) {
@@ -434,9 +510,8 @@ function addRemoteVideo(peerId, username) {
   container.id = `video-container-${peerId}`;
   
   container.innerHTML = `
-    <p style="margin-bottom:8px;"><strong>👤 ${username} (Camera)</strong> 
-      <span id="status-${peerId}" style="color: #f59e0b;">⏳ Connecting...</span>
-    </p>
+    <div class="name-tag">👤 ${username}</div>
+    <div class="status-tag"><span id="status-${peerId}" style="color: #f59e0b;">⏳ Connecting...</span></div>
     <video id="video-${peerId}" autoplay playsinline></video>
   `;
   
@@ -453,7 +528,10 @@ function removeRemoteVideo(peerId) {
   if (container) container.remove();
 }
 
-function addRemoteScreenVideo(peerId, stream) {
+function addRemoteScreenVideo(peerId, stream, sharerName) {
+  screenGrid.style.display = 'flex';
+  document.getElementById('screenTitle').style.display = 'block';
+
   let screenContainer = document.getElementById(`screen-container-${peerId}`);
   if (!screenContainer) {
     screenContainer = document.createElement('div');
@@ -461,10 +539,10 @@ function addRemoteScreenVideo(peerId, stream) {
     screenContainer.id = `screen-container-${peerId}`;
 
     screenContainer.innerHTML = `
-      <p style="margin-bottom:8px; font-weight:600; color:#f59e0b;">🖥️ អេក្រង់របស់ដៃគូ (Screen)</p>
+      <div class="name-tag" style="background:#f59e0b; color:#000;">🖥️ អេក្រង់របស់: ${sharerName}</div>
       <video id="screen-video-${peerId}" autoplay playsinline></video>
     `;
-    videoGrid.appendChild(screenContainer);
+    screenGrid.appendChild(screenContainer);
   }
 
   const screenVideo = document.getElementById(`screen-video-${peerId}`);
@@ -477,25 +555,29 @@ function addRemoteScreenVideo(peerId, stream) {
 function removeRemoteScreenVideo(peerId) {
   const screenContainer = document.getElementById(`screen-container-${peerId}`);
   if (screenContainer) screenContainer.remove();
+  
+  if (screenGrid.children.length === 0) {
+    screenGrid.style.display = 'none';
+    document.getElementById('screenTitle').style.display = 'none';
+  }
 }
 
 function updateUserCount() {
-  const count = document.querySelectorAll('.video-box:not(.screen-box)').length;
+  const count = document.querySelectorAll('#videoGrid .video-box').length;
   document.getElementById('welcome-text').innerText = 
     `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId} | អ្នកប្រើ: ${count}`;
 }
 
 async function toggleCamera() {
-  const camBtn = document.getElementById('camBtn');
-  
+  const camIcon = document.getElementById('camBtnIcon');
   if (isCameraOn) {
     if (cameraStream) {
       cameraStream.getTracks().forEach(track => track.stop());
       cameraStream = null;
     }
     isCameraOn = false;
-    camBtn.innerHTML = '📷 បើក កាមេរ៉ា';
-    camBtn.className = 'btn-secondary';
+    camIcon.innerHTML = '🚫📹';
+    camIcon.classList.add('off');
 
     const dummyTrack = localStream.getVideoTracks()[0];
     localVideo.srcObject = localStream;
@@ -503,21 +585,18 @@ async function toggleCamera() {
   } else {
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: true
+        video: { width: { ideal: 640 }, height: { ideal: 480 } }
       });
       const camTrack = cameraStream.getVideoTracks()[0];
       
       isCameraOn = true;
-      camBtn.innerHTML = '📷 បិទ កាមេរ៉ា';
-      camBtn.className = 'btn-success';
+      camIcon.innerHTML = '📹';
+      camIcon.classList.remove('off');
 
       localVideo.srcObject = cameraStream;
       replaceVideoTrackToPeers(camTrack);
 
-      camTrack.onended = () => {
-        toggleCamera();
-      };
+      camTrack.onended = () => toggleCamera();
     } catch (err) {
       alert('មិនអាចបើកកាមេរ៉ាបានទេ: ' + err.message);
     }
@@ -549,17 +628,15 @@ async function toggleScreenShare() {
       isScreenSharing = true;
 
       document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing';
-      document.getElementById('screenBtn').classList.add('btn-danger');
-      myScreenContainer.classList.remove('hidden');
-      localScreenVideo.srcObject = screenStream;
+      document.getElementById('screenBtn').className = 'btn-danger';
+      
+      addRemoteScreenVideo('my-local-screen', screenStream, myUsername + " (អ្នក)");
 
       for (const peerId of Object.keys(peerCalls)) {
-        myPeer.call(peerId, screenStream, { metadata: { type: 'screen' } });
+        myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } });
       }
 
-      screenStream.getVideoTracks()[0].onended = () => {
-        stopScreenShare();
-      };
+      screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
     } catch (err) {
       console.warn('Screen share canceled:', err);
     }
@@ -571,9 +648,9 @@ function stopScreenShare() {
   isScreenSharing = false;
 
   document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
-  document.getElementById('screenBtn').classList.remove('btn-danger');
-  document.getElementById('screenBtn').classList.add('btn-warning');
-  myScreenContainer.classList.add('hidden');
+  document.getElementById('screenBtn').className = 'btn-warning';
+  
+  removeRemoteScreenVideo('my-local-screen');
 
   if (screenStream) {
     screenStream.getTracks().forEach(track => track.stop());
@@ -583,30 +660,32 @@ function stopScreenShare() {
 
 function toggleMic() {
   const audioTrack = localStream.getAudioTracks()[0];
-  if (!audioTrack) {
-    return alert('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!');
-  }
+  if (!audioTrack) return alert('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!');
+  
+  const micIcon = document.getElementById('micBtnIcon');
   audioTrack.enabled = !audioTrack.enabled;
-  document.getElementById('micBtn').innerHTML = audioTrack.enabled ? '🎤 បិទ/បើក មេក្រូ' : '🔇 បើក មេក្រូ';
-  document.getElementById('micBtn').style.background = audioTrack.enabled ? '#10b981' : '#ef4444';
+  
+  if (audioTrack.enabled) {
+    micIcon.innerHTML = '🎤';
+    micIcon.classList.remove('off');
+  } else {
+    micIcon.innerHTML = '🔇';
+    micIcon.classList.add('off');
+  }
 }
 
-// មុខងារចាកចេញពីបន្ទប់ (ពេលកំពុង Meeting)
 function leaveRoom() {
-  // បញ្ឈប់ Animation និង Screen Share
   if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
   if (isScreenSharing) stopScreenShare();
   
-  // បិទ Camera បើកំពុងបើក
   if (isCameraOn && cameraStream) {
     cameraStream.getTracks().forEach(track => track.stop());
     cameraStream = null;
     isCameraOn = false;
-    document.getElementById('camBtn').innerHTML = '📷 បើក កាមេរ៉ា';
-    document.getElementById('camBtn').className = 'btn-secondary';
+    document.getElementById('camBtnIcon').innerHTML = '🚫📹';
+    document.getElementById('camBtnIcon').classList.add('off');
   }
   
-  // បិទការតភ្ជាប់ Peer ទាំងអស់
   for (const [peerId, call] of Object.entries(peerCalls)) {
     call.close();
     delete peerCalls[peerId];
@@ -615,33 +694,27 @@ function leaveRoom() {
   if (myPeer) myPeer.destroy();
   if (localStream) localStream.getTracks().forEach(track => track.stop());
   
-  // ផ្តាច់ Socket ដើម្បីឱ្យ Server ដឹងថាបានចេញពីបន្ទប់
   socket.disconnect();
 
-  // លាក់ផ្ទាំង Meeting
   document.getElementById('room-container').classList.add('hidden');
 
-  // ត្រួតពិនិត្យមើលសិទ្ធិ: បើជា Admin ឱ្យត្រឡប់ទៅ Dashboard វិញ
   if (currentUserRole === 'admin') {
     document.getElementById('admin-dashboard').classList.remove('hidden');
-    socket.connect(); // តភ្ជាប់ Socket ឡើងវិញដើម្បីអាចចូលបន្ទប់ផ្សេងទៀតបាន
+    socket.connect();
     loadAdminRoomMonitor();
     loadUsersTable();
   } else {
-    // បើជា User ធម្មតា ឱ្យ Refresh ទំព័រត្រឡប់ទៅកន្លែង Login វិញ
     location.reload(); 
   }
 }
 
-// មុខងារ Logout ចេញពី Admin Dashboard ទៅកាន់ផ្ទាំង Login វិញ
 function logoutAdmin() {
   myUsername = '';
   currentUserRole = '';
   currentRoomId = '';
-  location.reload(); // Refresh ដើម្បីជម្រះទិន្នន័យចេញពី Memory ទាំងស្រុង
+  location.reload();
 }
 
-// បន្ថែម function នេះក្រែងលោប៊ូតុងក្នុង HTML របស់អ្នកប្រើឈ្មោះ "logout()" ទទេ
 function logout() {
   logoutAdmin();
 }
