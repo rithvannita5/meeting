@@ -359,6 +359,7 @@ async function startMeeting() {
     document.getElementById('room-container').classList.remove('hidden');
     document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId}`;
     
+    // បង្កើត Peer សម្រាប់ Screen Share ទទួលការ Call ពីអ្នកដទៃ
     screenPeer = new Peer('screen-' + myId, PEER_CONFIG);
     screenPeer.on('call', (call) => {
       call.answer();
@@ -394,7 +395,6 @@ async function startMeeting() {
     });
   });
 
-  // អ្នកចូលថ្មីគ្រាន់តែបង្កើតផ្ទាំង UI រង់ចាំអ្នកចាស់ Call មក
   socket.on('existing-users', (users) => {
     users.forEach(user => {
       addRemoteVideo(user.peerId, user.username);
@@ -402,11 +402,23 @@ async function startMeeting() {
     updateUserCount();
   });
 
-  // អ្នកចាស់នៅក្នុងបន្ទប់ ទទួលខុសត្រូវ Call ទៅកាន់អ្នកទើបចូលថ្មី
+  // នៅពេលមានអ្នកថ្មីចូលមក៖
   socket.on('user-joined', ({ peerId, username }) => {
     if (peerId !== myId) {
       addRemoteVideo(peerId, username);
+      
+      // 1. Call បញ្ជូន Camera / Mic ទៅកាន់អ្នកថ្មី
       setTimeout(() => connectToUser(peerId), 1200);
+
+      // 2. ប្រសិនបើយើងកំពុងបើក Share Screen ស្រាប់ Call បញ្ជូន Screen ទៅកាន់អ្នកថ្មីភ្លាមៗ
+      if (isScreenSharing && screenStream) {
+        setTimeout(() => {
+          const targetScreenPeerId = 'screen-' + peerId;
+          const sCall = screenPeer.call(targetScreenPeerId, screenStream);
+          screenPeerConnections[peerId] = sCall;
+        }, 1800);
+      }
+
       updateUserCount();
     }
   });
