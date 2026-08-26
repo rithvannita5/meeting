@@ -2,10 +2,10 @@
 <html lang="km">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- បន្ថែម user-scalable=yes ដើម្បីឱ្យទូរស័ព្ទអាចយកដៃទាញពង្រីក (Zoom) បាន -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
   <title>ប្រព័ន្ធ Video Conference សុវត្ថិភាព</title>
   
-  <!-- បញ្ចូល Font ខ្មែរ Kantumruy Pro ឱ្យអក្សរស្អាត -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -15,20 +15,17 @@
   
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Kantumruy Pro', sans-serif; }
-    
-    /* កែឱ្យទំព័រពេញអេក្រង់ និង Login នៅចំកណ្តាល */
     body { background-color: #0b132b; color: #fff; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 15px; }
-    
     .hidden { display: none !important; }
 
-    /* Auth Box - ផ្ទាំង Login */
+    /* Auth Box */
     .card { background: #1c2541; padding: 30px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); width: 100%; max-width: 400px; text-align: center; }
     .card h2 { margin-bottom: 25px; color: #48cae4; font-weight: 600; }
     .form-group { margin-bottom: 15px; text-align: left; }
     .form-group label { display: block; margin-bottom: 8px; font-size: 14px; color: #cbd5e1; }
     input, select { width: 100%; padding: 14px; border-radius: 8px; border: 1px solid #3a506b; background: #0b132b; color: #fff; font-size: 15px; outline: none; }
     input:focus, select:focus { border-color: #48cae4; }
-    button { cursor: pointer; border: none; padding: 14px 20px; border-radius: 8px; font-weight: bold; font-size: 15px; transition: 0.2s; font-family: 'Kantumruy Pro', sans-serif; }
+    button { cursor: pointer; border: none; padding: 14px 20px; border-radius: 8px; font-weight: bold; font-size: 15px; transition: 0.2s; }
     
     .btn-primary { background: #00b4d8; color: #fff; width: 100%; margin-top: 10px; }
     .btn-primary:hover { background: #0096c7; }
@@ -38,26 +35,53 @@
     .btn-secondary { background: #475569; color: #fff; }
 
     /* Room Layout */
-    #room-container { width: 100%; max-width: 1400px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-height: 95vh; }
+    #room-container { width: 100%; max-width: 1600px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-height: 95vh; }
     .header-bar { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; background: #1c2541; padding: 15px 20px; border-radius: 10px; }
     .top-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
     
     .section-title { font-size: 16px; margin: 15px 0 10px 0; color: #94a3b8; width: 100%; text-align: left; border-bottom: 1px solid #334155; padding-bottom: 8px; }
-    .grid-section { display: flex; flex-wrap: wrap; gap: 15px; width: 100%; justify-content: center; margin-bottom: 25px; }
     
-    /* ផ្ទាំងវីដេអូ */
-    .video-box { position: relative; width: 100%; max-width: 340px; aspect-ratio: 4/3; border-radius: 12px; overflow: hidden; background: #000; border: 2px solid #334155; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; }
-    .screen-box { width: 100%; max-width: 800px; aspect-ratio: 16/9; border-color: #f59e0b; }
+    /* ----------------------------------------------------
+       ការកំណត់ Grid អេក្រង់: ៥ ប្រអប់ក្នុង ១ ជួរ និងទំហំប៉ុនគ្នា
+    ------------------------------------------------------- */
+    .grid-section { 
+      display: grid; 
+      grid-template-columns: repeat(5, 1fr); /* កំណត់ ៥ ប្រអប់ស្មើៗគ្នាក្នុង ១ ជួរ */
+      gap: 15px; 
+      width: 100%; 
+      margin-bottom: 25px; 
+    }
+    
+    /* ផ្ទាំងវីដេអូ និង Screen Share មានទំហំប៉ុនគ្នាទាំងអស់ */
+    .video-box { 
+      position: relative; 
+      width: 100%; 
+      aspect-ratio: 4/3; /* រក្សារាងចតុកោណកែងស្មើគ្នា */
+      border-radius: 12px; 
+      overflow: hidden; 
+      background: #000; 
+      border: 2px solid #334155; 
+      box-shadow: 0 4px 10px rgba(0,0,0,0.5); 
+      display: flex; 
+      align-items: center; 
+      justify-content: center;
+      cursor: pointer; /* បង្ហាញសញ្ញាដៃ អាចចុចឱ្យធំបាន */
+    }
+    
+    /* ពណ៌ស៊ុមសម្រាប់ Screen Share ឱ្យប្លែកពី Camera */
+    .screen-box { border-color: #f59e0b; }
+    
     .video-box video { width: 100%; height: 100%; object-fit: cover; }
+    /* Screen Share ប្រើ contain ដើម្បីកុំឱ្យដាច់សងខាង */
     .screen-box video { object-fit: contain; }
 
     /* ឈ្មោះ និងស្ថានភាព */
-    .name-tag { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #fff; padding: 5px 10px; border-radius: 6px; font-size: 13px; z-index: 5; }
-    .status-tag { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 6px; font-size: 12px; z-index: 5; }
+    .name-tag { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #fff; padding: 5px 10px; border-radius: 6px; font-size: 12px; z-index: 5; }
+    .status-tag { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 6px; font-size: 11px; z-index: 5; }
     
     /* Icon Control Buttons អណ្តែតលើវីដេអូ */
-    .floating-controls { position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 50; background: rgba(0,0,0,0.7); padding: 8px 18px; border-radius: 30px; }
-    .float-btn { background: #334155; color: white; border: none; border-radius: 50%; width: 45px; height: 45px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; transition: 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
+    .floating-controls { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 50; background: rgba(0,0,0,0.7); padding: 8px 18px; border-radius: 30px; }
+    .float-btn { background: #334155; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
     .float-btn:hover { background: #475569; }
     .float-btn.off { background: #ef4444; }
 
@@ -76,15 +100,21 @@
     .room-card { background: #0b132b; border: 1px solid #334155; padding: 20px; border-radius: 8px; width: 100%; max-width: 300px; }
     .room-card.live { border-color: #10b981; }
 
-    /* ទូរស័ព្ទ Responsive */
-    @media (max-width: 768px) {
+    /* ----------------------------------------------------
+       ទូរស័ព្ទ Responsive ឱ្យលោតតម្រៀបគ្នាបានស្អាត
+    ------------------------------------------------------- */
+    @media (max-width: 1200px) { .grid-section { grid-template-columns: repeat(4, 1fr); } }
+    @media (max-width: 992px) { .grid-section { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 768px) { 
+      .grid-section { grid-template-columns: repeat(2, 1fr); } /* ២ ប្រអប់ក្នុង ១ជួរ លើទូរស័ព្ទផ្ដេក */
       body { align-items: flex-start; justify-content: flex-start; }
       .card { margin-top: 20px; }
       #room-container, #admin-dashboard { padding-top: 10px; }
-      .floating-controls { bottom: 10px; padding: 6px 12px; gap: 10px; }
-      .float-btn { width: 40px; height: 40px; font-size: 16px; }
       .header-bar { flex-direction: column; align-items: flex-start; }
       .top-actions { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
+    }
+    @media (max-width: 480px) {
+      .grid-section { grid-template-columns: repeat(1, 1fr); } /* ១ ប្រអប់ក្នុង ១ជួរ លើទូរស័ព្ទបញ្ឈរ */
     }
   </style>
 </head>
@@ -175,7 +205,8 @@
       </div>
     </div>
 
-    <h4 class="section-title" id="screenTitle" style="display:none; color:#f59e0b;">🖥️ ផ្ទាំង Screen Share</h4>
+    <!-- ទីតាំង Screen Share នឹងចេញតម្រៀប ៥ ក្នុង១ជួរ ទំហំប៉ុនកាមេរ៉ា -->
+    <h4 class="section-title" id="screenTitle" style="display:none; color:#f59e0b;">🖥️ ផ្ទាំង Screen Share (ចុចលើវីដេអូ ដើម្បីមើលពេញអេក្រង់ធំ)</h4>
     <div id="screenGrid" class="grid-section"></div>
 
     <h4 class="section-title" style="color:#10b981;">👤 ផ្ទាំង Camera & Participants</h4>
@@ -183,7 +214,7 @@
       <!-- ផ្ទាំងកាមេរ៉ារបស់ខ្លួនឯង -->
       <div class="video-box" id="myVideoContainer">
         <div class="name-tag">👤 អ្នក (Me)</div>
-        <video id="localVideo" autoplay playsinline muted></video>
+        <video id="localVideo" autoplay playsinline muted title="ចុចដើម្បីមើលពេញអេក្រង់ធំ"></video>
         <!-- Floating Mic / Camera Icons -->
         <div class="floating-controls">
           <button id="micBtnIcon" onclick="toggleMic()" class="float-btn" title="បិទ/បើក មេក្រូ">🎤</button>
