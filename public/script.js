@@ -591,16 +591,57 @@ function toggleMic() {
   document.getElementById('micBtn').style.background = audioTrack.enabled ? '#10b981' : '#ef4444';
 }
 
+// មុខងារចាកចេញពីបន្ទប់ (ពេលកំពុង Meeting)
 function leaveRoom() {
+  // បញ្ឈប់ Animation និង Screen Share
   if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
   if (isScreenSharing) stopScreenShare();
+  
+  // បិទ Camera បើកំពុងបើក
   if (isCameraOn && cameraStream) {
     cameraStream.getTracks().forEach(track => track.stop());
+    cameraStream = null;
+    isCameraOn = false;
+    document.getElementById('camBtn').innerHTML = '📷 បើក កាមេរ៉ា';
+    document.getElementById('camBtn').className = 'btn-secondary';
   }
-  for (const [peerId, call] of Object.entries(peerCalls)) call.close();
+  
+  // បិទការតភ្ជាប់ Peer ទាំងអស់
+  for (const [peerId, call] of Object.entries(peerCalls)) {
+    call.close();
+    delete peerCalls[peerId];
+  }
+  
   if (myPeer) myPeer.destroy();
   if (localStream) localStream.getTracks().forEach(track => track.stop());
+  
+  // ផ្តាច់ Socket ដើម្បីឱ្យ Server ដឹងថាបានចេញពីបន្ទប់
   socket.disconnect();
 
-  location.reload();
+  // លាក់ផ្ទាំង Meeting
+  document.getElementById('room-container').classList.add('hidden');
+
+  // ត្រួតពិនិត្យមើលសិទ្ធិ: បើជា Admin ឱ្យត្រឡប់ទៅ Dashboard វិញ
+  if (currentUserRole === 'admin') {
+    document.getElementById('admin-dashboard').classList.remove('hidden');
+    socket.connect(); // តភ្ជាប់ Socket ឡើងវិញដើម្បីអាចចូលបន្ទប់ផ្សេងទៀតបាន
+    loadAdminRoomMonitor();
+    loadUsersTable();
+  } else {
+    // បើជា User ធម្មតា ឱ្យ Refresh ទំព័រត្រឡប់ទៅកន្លែង Login វិញ
+    location.reload(); 
+  }
+}
+
+// មុខងារ Logout ចេញពី Admin Dashboard ទៅកាន់ផ្ទាំង Login វិញ
+function logoutAdmin() {
+  myUsername = '';
+  currentUserRole = '';
+  currentRoomId = '';
+  location.reload(); // Refresh ដើម្បីជម្រះទិន្នន័យចេញពី Memory ទាំងស្រុង
+}
+
+// បន្ថែម function នេះក្រែងលោប៊ូតុងក្នុង HTML របស់អ្នកប្រើឈ្មោះ "logout()" ទទេ
+function logout() {
+  logoutAdmin();
 }
