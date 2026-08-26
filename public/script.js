@@ -200,7 +200,7 @@ async function editUserRoom(id, currentRoom) {
   }
 }
 
-function createActiveDummyMediaStream() {
+function createActiveDummyVideoTrack() {
   const canvas = document.createElement('canvas');
   canvas.width = 320;
   canvas.height = 240;
@@ -220,16 +220,7 @@ function createActiveDummyMediaStream() {
   draw();
 
   const videoStream = canvas.captureStream(15);
-  const videoTrack = videoStream.getVideoTracks()[0];
-
-  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const osc = audioCtx.createOscillator();
-  const dst = osc.connect(audioCtx.createMediaStreamDestination());
-  osc.start();
-  const audioTrack = dst.stream.getAudioTracks()[0];
-  audioTrack.enabled = false;
-
-  return new MediaStream([videoTrack, audioTrack]);
+  return videoStream.getVideoTracks()[0];
 }
 
 async function login() {
@@ -274,59 +265,6 @@ function adminJoinRoom(roomId) {
   startMeeting();
 }
 
-function logoutAdmin() {
-  location.reload();
-}
-
-async function createNewUser() {
-  const username = document.getElementById('newUsername').value.trim();
-  const password = document.getElementById('newPassword').value.trim();
-  const assignedRoom = document.getElementById('userAssignedRoomSelect').value;
-
-  if (!username || !password) return alert('សូមបំពេញព័ត៌មាន!');
-
-  try {
-    const res = await fetch('/api/create-user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, assignedRoom })
-    });
-    const data = await res.json();
-    alert(data.message);
-
-    if (data.success) {
-      document.getElementById('newUsername').value = '';
-      document.getElementById('newPassword').value = '';
-      await loadUsersTable();
-    }
-  } catch (err) {
-    console.error('Error creating user:', err);
-  }
-}
-
-async function createNewRoom() {
-  const roomId = document.getElementById('newRoomId').value.trim();
-  if (!roomId) return alert('សូមបញ្ចូលឈ្មោះបន្ទប់!');
-
-  try {
-    const res = await fetch('/api/create-room', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomId })
-    });
-    const data = await res.json();
-    alert(data.message);
-
-    if (data.success) {
-      document.getElementById('newRoomId').value = '';
-      await loadRooms();
-      if (currentUserRole === 'admin') loadAdminRoomMonitor();
-    }
-  } catch (err) {
-    console.error('Error creating room:', err);
-  }
-}
-
 const PEER_CONFIG = {
   config: {
     iceServers: [
@@ -349,17 +287,23 @@ const PEER_CONFIG = {
 };
 
 async function startMeeting() {
+  let audioTrack;
   try {
-    const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    const dummy = createActiveDummyMediaStream();
-    localStream = new MediaStream([audioStream.getAudioTracks()[0], dummy.getVideoTracks()[0]]);
-  } catch {
-    localStream = createActiveDummyMediaStream();
+    const userMedia = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    audioTrack = userMedia.getAudioTracks()[0];
+  } catch (e) {
+    console.warn('Microphone permission not granted or missing, creating silent track');
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const dst = osc.connect(audioCtx.createMediaStreamDestination());
+    osc.start();
+    audioTrack = dst.stream.getAudioTracks()[0];
+    audioTrack.enabled = false;
   }
 
-  if (localStream) {
-    localVideo.srcObject = localStream;
-  }
+  const dummyVideoTrack = createActiveDummyVideoTrack();
+  localStream = new MediaStream([audioTrack, dummyVideoTrack]);
+  localVideo.srcObject = localStream;
 
   myPeer = new Peer(PEER_CONFIG);
 
@@ -369,6 +313,7 @@ async function startMeeting() {
     document.getElementById('room-container').classList.remove('hidden');
     document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId}`;
     
+    // បង្កើត Peer សម្រាប់ទទួល Screen Share
     screenPeer = new Peer('screen-' + myId, PEER_CONFIG);
     screenPeer.on('call', (call) => {
       call.answer();
@@ -385,7 +330,6 @@ async function startMeeting() {
     socket.emit('join-room', currentRoomId, id, myUsername);
   });
 
-  // ទទួលការ Call ពីសមាជិកដទៃ
   myPeer.on('call', (call) => {
     const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
     call.answer(streamToSend);
@@ -405,32 +349,54 @@ async function startMeeting() {
     });
   });
 
-  // អ្នកចូលថ្មី ទទួលបានបញ្ជីសមាជិកចាស់ទាំងអស់ ហើយ Call ទៅកាន់អ្នកចាស់គ្រប់ៗគ្នា
-  socket.on('existing-users', (users) => {
+  // អ្នកចូលថ្មី ទទួលបានបញ្ជីអ្នកចាស់ និងអ្នកដែលកំពុងបើក Screen
+  socket.on('existing-users', ({ users, activeScreens }) => {
     users.forEach((user, index) => {
       addRemoteVideo(user.peerId, user.username);
       setTimeout(() => {
         connectToUser(user.peerId);
-      }, (index + 1) * 600); // ទុកចន្លោះពេលបន្តិចដើម្បីកុំឱ្យ Traffic ជាន់គ្នា
+      }, (index + 1) * 400);
     });
+
+    // ប្រសិនបើក្នុងបន្ទប់មានអ្នកកំពុង Share Screen ស្រាប់ Call ស្នើសុំ Screen ភ្លាម
+    if (activeScreens && activeScreens.length > 0) {
+      activeScreens.forEach(sharerPeerId => {
+        setTimeout(() => {
+          if (screenPeer) {
+            const call = screenPeer.call('screen-' + sharerPeerId, createActiveDummyVideoTrack().stream || localStream);
+            call.on('stream', (remoteScreenStream) => {
+              addRemoteScreenVideo(sharerPeerId, remoteScreenStream);
+            });
+          }
+        }, 1500);
+      });
+    }
+
     updateUserCount();
   });
 
-  // សមាជិកចាស់ គ្រាន់តែបង្កើតប្រអប់ UI ទទួលអ្នកថ្មី
   socket.on('user-joined', ({ peerId, username }) => {
     if (peerId !== myId) {
       addRemoteVideo(peerId, username);
       updateUserCount();
 
-      // បើកំពុង Share Screen បញ្ជូនអេក្រង់ទៅឱ្យអ្នកថ្មី
+      // បើយើងកំពុង Share Screen បញ្ជូនអេក្រង់ទៅឱ្យអ្នកថ្មីភ្លាម
       if (isScreenSharing && screenStream) {
         setTimeout(() => {
           const targetScreenPeerId = 'screen-' + peerId;
           const sCall = screenPeer.call(targetScreenPeerId, screenStream);
           screenPeerConnections[peerId] = sCall;
-        }, 1500);
+        }, 1200);
       }
     }
+  });
+
+  socket.on('user-started-screen', (sharerPeerId) => {
+    // ត្រៀមទទួល Screen ពេលមានអ្នកណាម្នាក់ចាប់ផ្ដើម Share
+  });
+
+  socket.on('user-stopped-screen', (sharerPeerId) => {
+    removeRemoteScreenVideo(sharerPeerId);
   });
 
   socket.on('user-left', (peerId) => {
@@ -571,7 +537,8 @@ async function toggleCamera() {
   } else {
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 640 }, height: { ideal: 480 } } 
+        video: { width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: true
       });
       const camTrack = cameraStream.getVideoTracks()[0];
       
@@ -616,6 +583,8 @@ async function toggleScreenShare() {
       myScreenContainer.classList.remove('hidden');
       localScreenVideo.srcObject = screenStream;
 
+      socket.emit('started-screen-sharing');
+
       for (const peerId of Object.keys(peerConnections)) {
         const targetScreenPeerId = 'screen-' + peerId;
         const call = screenPeer.call(targetScreenPeerId, screenStream);
@@ -632,7 +601,10 @@ async function toggleScreenShare() {
 }
 
 function stopScreenShare() {
+  if (!isScreenSharing) return;
   isScreenSharing = false;
+  socket.emit('stopped-screen-sharing');
+
   document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
   document.getElementById('screenBtn').classList.remove('btn-danger');
   document.getElementById('screenBtn').classList.add('btn-warning');
