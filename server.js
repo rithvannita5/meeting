@@ -162,6 +162,7 @@ app.get('/api/rooms', async (req, res) => {
   }
 });
 
+// Socket Signaling Multi-User
 io.on('connection', (socket) => {
   socket.on('join-room', (roomId, peerId, username) => {
     socket.join(roomId);
@@ -170,12 +171,15 @@ io.on('connection', (socket) => {
     socket.data.username = username;
     
     if (!roomUsers[roomId]) roomUsers[roomId] = [];
-    // លុប User ចាស់ដែលប្រើ PeerId ឬ Username ដូចគ្នាដើម្បីកុំឱ្យជាប់ Session ចាស់
     roomUsers[roomId] = roomUsers[roomId].filter(u => u.peerId !== peerId && u.username !== username);
+    
+    const existingUsers = [...roomUsers[roomId]];
     roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
-    const existingUsers = roomUsers[roomId].filter(u => u.peerId !== peerId);
+    // ផ្ញើបញ្ជី User ទាំងអស់ដែលនៅក្នុងបន្ទប់រួចហើយ ទៅកាន់អ្នកទើបចូលថ្មី
     socket.emit('existing-users', existingUsers);
+    
+    // ប្រាប់អ្នកទាំងអស់គ្នាដែលនៅមុន ថាមានអ្នកថ្មីចូលមក
     socket.to(roomId).emit('user-joined', { peerId, username });
 
     socket.on('disconnect', () => {
