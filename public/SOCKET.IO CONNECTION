@@ -1,283 +1,268 @@
 // ============================================================
-// SOCKET.IO CONNECTION - FIXED FOR RENDER
+// SOCKET.IO CONNECTION - Polling with upgrade
 // ============================================================
-const socket = io({
-  transports: ['websocket'], // Only WebSocket
-  reconnection: true,
-  reconnectionAttempts: 10,
-  reconnectionDelay: 1000,
-  reconnectionDelayMax: 5000,
-  timeout: 60000,
-  autoConnect: true,
-  forceNew: true,
-  path: '/socket.io',
-  upgrade: false // Don't upgrade, use WebSocket directly
-});
-// ============================================================
-// SOCKET EVENT HANDLERS
-// ============================================================
-socket.on('connect_error', (error) => {
-  console.log('❌ Socket.IO connection error:', error);
-  // If WebSocket fails, try polling as fallback
-  if (error.message === 'websocket error') {
-    console.log('🔄 Falling back to polling...');
-    socket.io.opts.transports = ['polling', 'websocket'];
-    socket.connect();
-  }
-  showToast('⚠️ កំពុងព្យាយាមភ្ជាប់ Server...', 'warning');
-});
+let socket = null;
+let socketConnected = false;
+let connectionAttempts = 0;
 
-socket.on('connect', () => {
-  console.log('✅ Socket.IO connected successfully!');
-  showToast('✅ ភ្ជាប់ Server បានជោគជ័យ!', 'success');
-});
-
-socket.on('disconnect', (reason) => {
-  console.log('🔌 Socket.IO disconnected:', reason);
-  if (reason === 'io server disconnect') {
-    socket.connect();
-  }
-});
-
-socket.on('reconnect_attempt', (attempt) => {
-  console.log(`🔄 Reconnect attempt ${attempt}`);
-});
-
-socket.on('reconnect', (attempt) => {
-  console.log(`✅ Reconnected after ${attempt} attempts`);
-});
-
-socket.on('reconnect_failed', () => {
-  console.log('❌ Reconnect failed');
-  showToast('❌ មិនអាចភ្ជាប់ Server បានទេ!', 'error');
-});
-
-// ============================================================
-// 1. PEER & STREAM VARIABLES
-// ============================================================
-let myPeer;
-let myId = '';
-let myUsername = '';
-let currentUserRole = '';
-let currentRoomId = '';
-let localStream = null;
-let cameraStream = null;
-let screenStream = null;
-
-const peerCalls = {};
-const userNamesMap = {};
-
-let isCameraOn = false;
-let isScreenSharing = false;
-let dummyAnimFrame = null;
-let allRoomsList = [];
-let pendingLoginData = null;
-
-const localVideo = document.getElementById('localVideo');
-const screenGrid = document.getElementById('screenGrid');
-const videoGrid = document.getElementById('videoGrid');
-
-// ============================================================
-// 2. REMOTE CONTROL VARIABLES
-// ============================================================
-let isRemoteControlActive = false;
-let remoteControlTarget = null;
-let remoteControlRequestId = null;
-let isBeingControlled = false;
-let remotePointer = null;
-
-// ============================================================
-// 3. CHAT NOTIFICATION VARIABLES
-// ============================================================
-let unreadChats = {};
-let isChatOpen = false;
-let autoReplyEnabled = true;
-
-// ============================================================
-// 4. SOCKET EVENT LISTENERS
-// ============================================================
-
-socket.on('rooms-update', () => {
-  if ((currentUserRole === 'admin' || currentUserRole === 'supervisor') && 
-      !document.getElementById('admin-dashboard').classList.contains('hidden')) {
-    loadAdminRoomMonitor();
-  }
-});
-
-socket.on('play-sound', (type) => {
-  playNotificationSound(type);
-});
-
-socket.on('receive-otp', (data) => {
-  alert(`🚨 ព្រមាន៖ មានគេកំពុងព្យាយាម Login ចូលគណនីរបស់អ្នកពីឧបករណ៍ផ្សេង!\n\n🔐 នេះជាលេខកូដ 2FA របស់អ្នក៖ 【 ${data.otp} 】`);
-});
-
-socket.on('admin-alert', (data) => {
-  if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
-    alert(`🚨 សេចក្តីប្រកាសអាសន្នសុវត្ថិភាព!\n\nUser ឈ្មោះ "${data.username}" កំពុង Login លើឧបករណ៍ចំនួន ${data.count} ក្នុងពេលតែមួយ!`);
-  }
-});
-
-// ============================================================
-// 5. REMOTE CONTROL SOCKET EVENTS
-// ============================================================
-
-socket.on('remote-control-request', (data) => {
-  if (data.targetId === myId) {
-    const username = userNamesMap[data.controllerId] || 'មិត្តភក្តិ';
-    if (confirm(`${username} ចង់គ្រប់គ្រង Screen របស់អ្នកពីចម្ងាយ។ តើអ្នកអនុញ្ញាតទេ?`)) {
-      fetch('/api/remote-control/approve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: data.requestId,
-          targetId: myId
-        })
-      });
-      isBeingControlled = true;
-      alert('អ្នកបានអនុញ្ញាត Remote Control! អ្នកគ្រប់គ្រងអាចបញ្ជា Screen របស់អ្នកបាន។');
-    } else {
-      fetch('/api/remote-control/reject', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: data.requestId })
-      });
+function connectSocket() {
+  socket = io({
+    transports: ['polling', 'websocket'],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 60000,
+    autoConnect: true,
+    forceNew: true,
+    path: '/socket.io',
+    upgrade: true,
+    rememberUpgrade: true,
+    // បន្ថែម extraHeaders សម្រាប់ Render
+    extraHeaders: {
+      'X-Forwarded-Proto': 'https'
     }
-  }
-});
-
-socket.on('remote-control-approved', (data) => {
-  if (data.controllerId === myId) {
-    alert('✅ Remote Control ត្រូវបានអនុញ្ញាត! អ្នកអាចគ្រប់គ្រង Screen ពីចម្ងាយបានហើយ។');
-    isRemoteControlActive = true;
-    remoteControlTarget = data.targetId;
-    startRemoteControl();
-  }
-});
-
-socket.on('remote-control-rejected', (data) => {
-  if (data.controllerId === myId) {
-    alert('❌ Remote Control ត្រូវបានបដិសេធ!');
-    isRemoteControlActive = false;
-    remoteControlTarget = null;
-  }
-});
-
-socket.on('remote-control-ended', (data) => {
-  if (data.controllerId === myId) {
-    alert('Remote Control បានបញ្ចប់!');
-    isRemoteControlActive = false;
-    remoteControlTarget = null;
-    stopRemoteControl();
-  }
-  if (data.targetId === myId) {
-    isBeingControlled = false;
-    alert('Remote Control បានបញ្ចប់!');
-    if (remotePointer) {
-      remotePointer.remove();
-      remotePointer = null;
-    }
-  }
-});
-
-socket.on('remote-mouse-move', (data) => {
-  if (!isBeingControlled) return;
-  showRemotePointer(data.x, data.y);
-});
-
-socket.on('remote-mouse-click', (data) => {
-  if (!isBeingControlled) return;
-  const element = document.elementFromPoint(data.x, data.y);
-  if (element) {
-    element.click();
-    showRemoteClick(data.x, data.y);
-  }
-});
-
-socket.on('remote-keyboard', (data) => {
-  if (!isBeingControlled) return;
-  const activeElement = document.activeElement;
-  if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'SELECT')) {
-    const event = new KeyboardEvent('keydown', { key: data.key, bubbles: true });
-    activeElement.dispatchEvent(event);
-    if (data.key.length === 1) {
-      const inputEvent = new InputEvent('input', { bubbles: true });
-      activeElement.dispatchEvent(inputEvent);
-    }
-  }
-});
-
-// ============================================================
-// 6. PRIVATE CHAT WITH NOTIFICATIONS
-// ============================================================
-
-socket.on('receive-private-message', (data) => {
-  const chatMsgs = document.getElementById('chat-messages');
-  chatMsgs.innerHTML += `<div class="msg-item"><b>From 👤 ${data.fromUsername}:</b><br>${data.message}</div>`;
-  chatMsgs.scrollTop = chatMsgs.scrollHeight;
-  
-  if (!unreadChats[data.fromPeerId]) {
-    unreadChats[data.fromPeerId] = { count: 0, messages: [], username: data.fromUsername };
-  }
-  unreadChats[data.fromPeerId].count++;
-  unreadChats[data.fromPeerId].messages.push(data.message);
-  unreadChats[data.fromPeerId].username = data.fromUsername;
-  
-  updateChatBadge();
-  
-  if (!isChatOpen) {
-    showChatNotification(data.fromUsername, data.message, data.fromPeerId);
-  }
-  
-  updateChatUserList();
-  
-  if (autoReplyEnabled && !isChatOpen) {
-    setTimeout(() => {
-      if (!isChatOpen && unreadChats[data.fromPeerId]?.count > 0) {
-        toggleChat();
-        document.getElementById('chatRecipientSelect').value = data.fromPeerId;
-        showToast(`💬 ${data.fromUsername} បានផ្ញើសារមកអ្នក`, 'info');
-      }
-    }, 3000);
-  }
-});
-
-// ============================================================
-// 7. USER JOIN/LEAVE EVENTS
-// ============================================================
-
-socket.on('existing-users', (users) => {
-  users.forEach((user, index) => {
-    userNamesMap[user.peerId] = user.username;
-    addRemoteVideo(user.peerId, user.username);
-    setTimeout(() => connectToUser(user.peerId), (index + 1) * 500);
   });
-  updateUserCount();
-  updateChatUserList();
-});
 
-socket.on('user-joined', ({ peerId, username }) => {
-  if (peerId !== myId) {
-    userNamesMap[peerId] = username;
-    addRemoteVideo(peerId, username);
+  // ============================================================
+  // SOCKET EVENT HANDLERS
+  // ============================================================
+  socket.on('connect_error', (error) => {
+    console.log('❌ Socket.IO connection error:', error);
+    connectionAttempts++;
+    
+    if (error.message === 'websocket error' || error.message === 'xhr poll error') {
+      console.log('🔄 Trying with polling only...');
+      // ប្រសិនបើបរាជ័យ សាកប្រើ polling តែមួយ
+      if (connectionAttempts > 3) {
+        socket.io.opts.transports = ['polling'];
+        socket.connect();
+      }
+    }
+    
+    if (connectionAttempts > 5) {
+      showToast('⚠️ កំពុងព្យាយាមភ្ជាប់ Server...', 'warning');
+    }
+  });
+
+  socket.on('connect', () => {
+    console.log('✅ Socket.IO connected successfully!');
+    socketConnected = true;
+    connectionAttempts = 0;
+    showToast('✅ ភ្ជាប់ Server បានជោគជ័យ!', 'success');
+    
+    // បន្ទាប់ពីភ្ជាប់បាន ព្យាយាម Upgrade ទៅ WebSocket
+    if (socket.io.opts.transports[0] === 'polling') {
+      console.log('🔄 Attempting to upgrade to WebSocket...');
+      setTimeout(() => {
+        socket.io.opts.transports = ['polling', 'websocket'];
+        socket.io.engine.open();
+      }, 2000);
+    }
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log('🔌 Socket.IO disconnected:', reason);
+    socketConnected = false;
+    if (reason === 'io server disconnect') {
+      socket.connect();
+    }
+  });
+
+  socket.on('reconnect_attempt', (attempt) => {
+    console.log(`🔄 Reconnect attempt ${attempt}`);
+  });
+
+  socket.on('reconnect', (attempt) => {
+    console.log(`✅ Reconnected after ${attempt} attempts`);
+    socketConnected = true;
+  });
+
+  socket.on('reconnect_failed', () => {
+    console.log('❌ Reconnect failed');
+    showToast('❌ មិនអាចភ្ជាប់ Server បានទេ!', 'error');
+  });
+
+  // ============================================================
+  // Keep the original socket event listeners
+  // ============================================================
+  socket.on('rooms-update', () => {
+    if ((currentUserRole === 'admin' || currentUserRole === 'supervisor') && 
+        !document.getElementById('admin-dashboard').classList.contains('hidden')) {
+      loadAdminRoomMonitor();
+    }
+  });
+
+  socket.on('play-sound', (type) => {
+    playNotificationSound(type);
+  });
+
+  socket.on('receive-otp', (data) => {
+    alert(`🚨 ព្រមាន៖ មានគេកំពុងព្យាយាម Login ចូលគណនីរបស់អ្នកពីឧបករណ៍ផ្សេង!\n\n🔐 នេះជាលេខកូដ 2FA របស់អ្នក៖ 【 ${data.otp} 】`);
+  });
+
+  socket.on('admin-alert', (data) => {
+    if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
+      alert(`🚨 សេចក្តីប្រកាសអាសន្នសុវត្ថិភាព!\n\nUser ឈ្មោះ "${data.username}" កំពុង Login លើឧបករណ៍ចំនួន ${data.count} ក្នុងពេលតែមួយ!`);
+    }
+  });
+
+  // Remote Control Events
+  socket.on('remote-control-request', (data) => {
+    if (data.targetId === myId) {
+      const username = userNamesMap[data.controllerId] || 'មិត្តភក្តិ';
+      if (confirm(`${username} ចង់គ្រប់គ្រង Screen របស់អ្នកពីចម្ងាយ។ តើអ្នកអនុញ្ញាតទេ?`)) {
+        fetch('/api/remote-control/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestId: data.requestId,
+            targetId: myId
+          })
+        });
+        isBeingControlled = true;
+        alert('អ្នកបានអនុញ្ញាត Remote Control! អ្នកគ្រប់គ្រងអាចបញ្ជា Screen របស់អ្នកបាន។');
+      } else {
+        fetch('/api/remote-control/reject', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId: data.requestId })
+        });
+      }
+    }
+  });
+
+  socket.on('remote-control-approved', (data) => {
+    if (data.controllerId === myId) {
+      alert('✅ Remote Control ត្រូវបានអនុញ្ញាត! អ្នកអាចគ្រប់គ្រង Screen ពីចម្ងាយបានហើយ។');
+      isRemoteControlActive = true;
+      remoteControlTarget = data.targetId;
+      startRemoteControl();
+    }
+  });
+
+  socket.on('remote-control-rejected', (data) => {
+    if (data.controllerId === myId) {
+      alert('❌ Remote Control ត្រូវបានបដិសេធ!');
+      isRemoteControlActive = false;
+      remoteControlTarget = null;
+    }
+  });
+
+  socket.on('remote-control-ended', (data) => {
+    if (data.controllerId === myId) {
+      alert('Remote Control បានបញ្ចប់!');
+      isRemoteControlActive = false;
+      remoteControlTarget = null;
+      stopRemoteControl();
+    }
+    if (data.targetId === myId) {
+      isBeingControlled = false;
+      alert('Remote Control បានបញ្ចប់!');
+      if (remotePointer) {
+        remotePointer.remove();
+        remotePointer = null;
+      }
+    }
+  });
+
+  socket.on('remote-mouse-move', (data) => {
+    if (!isBeingControlled) return;
+    showRemotePointer(data.x, data.y);
+  });
+
+  socket.on('remote-mouse-click', (data) => {
+    if (!isBeingControlled) return;
+    const element = document.elementFromPoint(data.x, data.y);
+    if (element) {
+      element.click();
+      showRemoteClick(data.x, data.y);
+    }
+  });
+
+  socket.on('remote-keyboard', (data) => {
+    if (!isBeingControlled) return;
+    const activeElement = document.activeElement;
+    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'SELECT')) {
+      const event = new KeyboardEvent('keydown', { key: data.key, bubbles: true });
+      activeElement.dispatchEvent(event);
+      if (data.key.length === 1) {
+        const inputEvent = new InputEvent('input', { bubbles: true });
+        activeElement.dispatchEvent(inputEvent);
+      }
+    }
+  });
+
+  // Private Chat
+  socket.on('receive-private-message', (data) => {
+    const chatMsgs = document.getElementById('chat-messages');
+    chatMsgs.innerHTML += `<div class="msg-item"><b>From 👤 ${data.fromUsername}:</b><br>${data.message}</div>`;
+    chatMsgs.scrollTop = chatMsgs.scrollHeight;
+    
+    if (!unreadChats[data.fromPeerId]) {
+      unreadChats[data.fromPeerId] = { count: 0, messages: [], username: data.fromUsername };
+    }
+    unreadChats[data.fromPeerId].count++;
+    unreadChats[data.fromPeerId].messages.push(data.message);
+    unreadChats[data.fromPeerId].username = data.fromUsername;
+    
+    updateChatBadge();
+    
+    if (!isChatOpen) {
+      showChatNotification(data.fromUsername, data.message, data.fromPeerId);
+    }
+    
+    updateChatUserList();
+    
+    if (autoReplyEnabled && !isChatOpen) {
+      setTimeout(() => {
+        if (!isChatOpen && unreadChats[data.fromPeerId]?.count > 0) {
+          toggleChat();
+          document.getElementById('chatRecipientSelect').value = data.fromPeerId;
+          showToast(`💬 ${data.fromUsername} បានផ្ញើសារមកអ្នក`, 'info');
+        }
+      }, 3000);
+    }
+  });
+
+  // User Join/Leave
+  socket.on('existing-users', (users) => {
+    users.forEach((user, index) => {
+      userNamesMap[user.peerId] = user.username;
+      addRemoteVideo(user.peerId, user.username);
+      setTimeout(() => connectToUser(user.peerId), (index + 1) * 500);
+    });
     updateUserCount();
     updateChatUserList();
+  });
 
-    if (isScreenSharing && screenStream) {
-      setTimeout(() => myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } }), 1200);
+  socket.on('user-joined', ({ peerId, username }) => {
+    if (peerId !== myId) {
+      userNamesMap[peerId] = username;
+      addRemoteVideo(peerId, username);
+      updateUserCount();
+      updateChatUserList();
+
+      if (isScreenSharing && screenStream) {
+        setTimeout(() => myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } }), 1200);
+      }
     }
-  }
-});
+  });
 
-socket.on('user-left', (peerId) => {
-  removeRemoteVideo(peerId);
-  removeRemoteScreenVideo(peerId);
-  if (peerCalls[peerId]) { peerCalls[peerId].close(); delete peerCalls[peerId]; }
-  delete userNamesMap[peerId];
-  updateUserCount();
-  updateChatUserList();
-});
+  socket.on('user-left', (peerId) => {
+    removeRemoteVideo(peerId);
+    removeRemoteScreenVideo(peerId);
+    if (peerCalls[peerId]) { peerCalls[peerId].close(); delete peerCalls[peerId]; }
+    delete userNamesMap[peerId];
+    updateUserCount();
+    updateChatUserList();
+  });
 
+  return socket;
+}
+
+// Initialize socket
+connectSocket();
 // ============================================================
 // 8. SOUND NOTIFICATION
 // ============================================================
