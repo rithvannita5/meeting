@@ -32,6 +32,7 @@
     .btn-danger { background: #ef4444; color: #fff; }
     .btn-secondary { background: #475569; color: #fff; }
     .btn-purple { background: #8b5cf6; color: #fff; }
+    .btn-purple:hover { background: #7c3aed; }
 
     #otp-modal { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; display:flex; justify-content:center; align-items:center; padding: 15px; }
 
@@ -285,6 +286,7 @@
           <span id="chatBadgeCount" class="badge-count" style="display:none;">0</span>
         </button>
         <button id="screenBtn" class="btn-warning" onclick="toggleScreenShare()">🖥️ Share Screen</button>
+        <button id="screenBtnFallback" class="btn-secondary" onclick="toggleScreenShareFallback()" style="display:none;">📡 Share (Fallback)</button>
         <button class="btn-secondary" onclick="changeMyPassword()">🔑 ប្តូរ Password</button>
         <button class="btn-danger" onclick="leaveRoom()">🚪 ចាកចេញពីបន្ទប់</button>
       </div>
