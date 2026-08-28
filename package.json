@@ -1,24 +1,19 @@
 {
-  "name": "video-conference",
+  "name": "meeting-app",
   "version": "1.0.0",
-  "description": "Video Conference with Screen Share",
+  "description": "Video Conference App",
   "main": "server.js",
-  "engines": {
-    "node": "20.x"
-  },
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "mongoose": "^7.5.0",
-    "peer": "^1.0.0",
-    "socket.io": "^4.7.2"
+    "express": "^4.19.2",
+    "mongoose": "^8.3.1",
+    "peer": "^1.0.2",
+    "socket.io": "^4.7.5"
   },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
+  "engines": {
+    "node": "18.x"
   }
 }
