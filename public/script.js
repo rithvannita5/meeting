@@ -13,7 +13,7 @@ let screenStream = null;
 
 const peerCalls = {};
 const userNamesMap = {};
-const screenCalls = {}; // ✅ បន្ថែមសម្រាប់រក្សាទុក screen calls
+const screenCalls = {};
 
 let isCameraOn = false;
 let isScreenSharing = false;
@@ -224,31 +224,8 @@ socket.on('user-joined', ({ peerId, username }) => {
     updateUserCount();
     updateChatUserList();
 
-    // ✅ ផ្ញើ screen stream ទៅកាន់ user ថ្មី
     if (isScreenSharing && screenStream) {
-      setTimeout(() => {
-        if (myPeer && screenStream) {
-          try {
-            const call = myPeer.call(peerId, screenStream, { 
-              metadata: { type: 'screen', username: myUsername } 
-            });
-            screenCalls[peerId] = call;
-            
-            call.on('close', () => {
-              delete screenCalls[peerId];
-            });
-            
-            call.on('error', (err) => {
-              console.error('Screen share error to new user:', err);
-              delete screenCalls[peerId];
-            });
-            
-            console.log('📺 Sent screen to new user:', peerId);
-          } catch (err) {
-            console.error('Failed to send screen to new user:', err);
-          }
-        }
-      }, 1000);
+      setTimeout(() => sendScreenToPeer(peerId), 1000);
     }
   }
 });
@@ -603,12 +580,21 @@ async function loadRooms() {
     if (select) select.innerHTML = '';
     if (adminSelect) adminSelect.innerHTML = '';
 
-    data.rooms.forEach(r => {
+    allRoomsList.forEach(r => {
       if (select) select.innerHTML += `<option value="${r}">${r}</option>`;
       if (adminSelect) adminSelect.innerHTML += `<option value="${r}">${r}</option>`;
     });
   } catch (err) {
     console.error('Error fetching rooms:', err);
+    // Use default rooms
+    const defaultRooms = ['room-1', 'room-2', 'room-3', 'room-4', 'room-5'];
+    const select = document.getElementById('roomSelect');
+    if (select) {
+      select.innerHTML = '';
+      defaultRooms.forEach(r => {
+        select.innerHTML += `<option value="${r}">${r}</option>`;
+      });
+    }
   }
 }
 
@@ -618,6 +604,11 @@ async function loadAdminRoomMonitor() {
     const data = await res.json();
     const container = document.getElementById('activeRoomsList');
     container.innerHTML = '';
+
+    if (!data.rooms || data.rooms.length === 0) {
+      container.innerHTML = '<p style="color:#94a3b8;">គ្មានបន្ទប់សកម្មទេ</p>';
+      return;
+    }
 
     data.rooms.forEach(room => {
       const isLive = room.userCount > 0;
@@ -635,7 +626,10 @@ async function loadAdminRoomMonitor() {
         </div>
       `;
     });
-  } catch (err) { console.error('Error loading rooms:', err); }
+  } catch (err) { 
+    console.error('Error loading rooms:', err); 
+    document.getElementById('activeRoomsList').innerHTML = '<p style="color:#ef4444;">មានបញ្ហាក្នុងការដាក់បង្ហាញបន្ទប់</p>';
+  }
 }
 
 async function loadUsersTable() {
@@ -644,6 +638,11 @@ async function loadUsersTable() {
     const data = await res.json();
     const tbody = document.getElementById('userTableBody');
     tbody.innerHTML = '';
+
+    if (!data.users || data.users.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#94a3b8;">គ្មាន User ទេ</td></tr>';
+      return;
+    }
 
     data.users.forEach(user => {
       const isBlocked = user.isBlocked;
@@ -656,9 +655,9 @@ async function loadUsersTable() {
       } else if (user.role === 'supervisor') {
         if (currentUserRole === 'admin') {
           adminActions = `
-            <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'user')">កែ Role</button>
-            <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
-            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
+            <button class="action-btn btn-secondary" onclick="editUserRole('${user._id}', 'user')">កែ Role</button>
+            <button class="action-btn btn-secondary" onclick="editUserRoom('${user._id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
+            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user._id}', '${user.username}')">Reset Pwd</button>
           `;
         } else {
           adminActions = '<span style="color:#64748b;">មិនអាចកែប្រែបាន</span>';
@@ -666,11 +665,11 @@ async function loadUsersTable() {
       } else {
         if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
           adminActions = `
-            <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'supervisor')">កែ Role</button>
-            <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user.id}')">${isBlocked ? 'Unblock' : 'Block'}</button>
-            <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
-            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
-            ${currentUserRole === 'admin' ? `<button class="action-btn btn-danger" onclick="deleteUser('${user.id}', '${user.username}')">លុប</button>` : ''}
+            <button class="action-btn btn-secondary" onclick="editUserRole('${user._id}', 'supervisor')">កែ Role</button>
+            <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user._id}')">${isBlocked ? 'Unblock' : 'Block'}</button>
+            <button class="action-btn btn-secondary" onclick="editUserRoom('${user._id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
+            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user._id}', '${user.username}')">Reset Pwd</button>
+            ${currentUserRole === 'admin' ? `<button class="action-btn btn-danger" onclick="deleteUser('${user._id}', '${user.username}')">លុប</button>` : ''}
           `;
         }
       }
@@ -687,7 +686,10 @@ async function loadUsersTable() {
         </tr>
       `;
     });
-  } catch (err) { console.error('Error loading user table:', err); }
+  } catch (err) { 
+    console.error('Error loading user table:', err); 
+    document.getElementById('userTableBody').innerHTML = '<tr><td colspan="5" style="text-align:center; color:#ef4444;">មានបញ្ហាក្នុងការដាក់បង្ហាញ Users</td></tr>';
+  }
 }
 
 function adminJoinRoom(roomId) {
@@ -706,7 +708,9 @@ async function toggleBlockUser(id) {
     const data = await res.json();
     showToast(data.message, 'success');
     await loadUsersTable();
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការ Toggle Block!', 'error');
+  }
 }
 
 async function deleteUser(id, username) {
@@ -716,7 +720,9 @@ async function deleteUser(id, username) {
     const data = await res.json();
     showToast(data.message, 'success');
     await loadUsersTable();
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការលុប User!', 'error');
+  }
 }
 
 async function resetPassword(id, username) {
@@ -730,7 +736,9 @@ async function resetPassword(id, username) {
     });
     const data = await res.json();
     showToast(data.message, 'success');
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការប្តូរ Password!', 'error');
+  }
 }
 
 async function editUserRoom(id, currentRoom) {
@@ -745,7 +753,9 @@ async function editUserRoom(id, currentRoom) {
     const data = await res.json();
     showToast(data.message, 'success');
     await loadUsersTable();
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការប្តូរបន្ទប់!', 'error');
+  }
 }
 
 async function editUserRole(id, newRole) {
@@ -791,7 +801,9 @@ async function createNewUser() {
       await loadUsersTable();
       await loadRooms();
     }
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការបង្កើត User!', 'error');
+  }
 }
 
 async function createNewRoom() {
@@ -810,7 +822,9 @@ async function createNewRoom() {
       await loadRooms();
       if (currentUserRole === 'admin') loadAdminRoomMonitor();
     }
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការបង្កើតបន្ទប់!', 'error');
+  }
 }
 
 // ============================================================
@@ -976,7 +990,7 @@ function sendPrivateMsg() {
 }
 
 // ============================================================
-// 17. WEBRTC / PEERJS
+// 17. WEBRTC / PEERJS - FIXED
 // ============================================================
 
 function createActiveDummyVideoTrack() {
@@ -1016,34 +1030,31 @@ async function startMeeting() {
   localStream = new MediaStream([audioTrack, createActiveDummyVideoTrack()]);
   localVideo.srcObject = localStream;
 
-  // ========== WEBRTC / PEERJS ==========
-  const iceServers = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
-  ];
-
-  // Optional TURN credentials supplied by Render environment variables.
-  try {
-    const turnRes = await fetch('/api/webrtc-config', { cache: 'no-store' });
-    if (turnRes.ok) {
-      const cfg = await turnRes.json();
-      if (Array.isArray(cfg.iceServers)) iceServers.push(...cfg.iceServers);
-    }
-  } catch (e) {
-    console.warn('TURN config unavailable; automatic Socket.IO screen fallback is enabled.');
-  }
-
+  // ========== USE PUBLIC PEERJS SERVER ==========
   myPeer = new Peer(undefined, {
-    host: window.location.hostname,
-    port: window.location.protocol === 'https:' ? 443 : 80,
-    path: '/peerjs',
-    secure: window.location.protocol === 'https:',
+    host: '0.peerjs.com',
+    port: 443,
+    path: '/',
+    secure: true,
     config: {
-      iceServers,
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+        {
+          urls: [
+            'turn:openrelay.metered.ca:80',
+            'turn:openrelay.metered.ca:443',
+            'turn:openrelay.metered.ca:443?transport=tcp'
+          ],
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ],
       iceTransportPolicy: 'all',
-      iceCandidatePoolSize: 10,
-      bundlePolicy: 'max-bundle',
-      rtcpMuxPolicy: 'require'
+      iceCandidatePoolSize: 10
     }
   });
 
@@ -1069,7 +1080,7 @@ async function startMeeting() {
     showToast('✅ Connected to Peer Server!', 'success');
   });
 
-  // ========== FIXED: INCOMING CALL HANDLER ==========
+  // ========== INCOMING CALL HANDLER ==========
   myPeer.on('call', (call) => {
     const callType = call.metadata ? call.metadata.type : 'camera';
     const callerName = call.metadata ? call.metadata.username : 'ដៃគូ';
@@ -1079,8 +1090,8 @@ async function startMeeting() {
     // Handle Screen Share
     if (callType === 'screen') {
       console.log('📺 Receiving screen share from:', callerName);
-
-      // Receive-only call: do not send camera/mic back.
+      
+      // ✅ Receive-only: answer without sending stream back
       call.answer();
 
       let receivedScreen = false;
@@ -1156,7 +1167,6 @@ async function startMeeting() {
       updateUserCount();
       updateChatUserList();
 
-      // Send current screen to a newly joined user.
       if (isScreenSharing && screenStream) {
         setTimeout(() => sendScreenToPeer(peerId), 1000);
       }
@@ -1312,9 +1322,31 @@ async function startSocketScreenFallbackFromExistingStream() {
 
 function connectToUser(peerId) {
   if (peerCalls[peerId]) return;
-  const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
+  
   try {
-    // Send screen separately from camera.
+    // Send camera stream first
+    const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
+    const call = myPeer.call(peerId, streamToSend, { metadata: { type: 'camera', username: myUsername } });
+    peerCalls[peerId] = call;
+    updateConnectionStatus(peerId, '⏳ Connecting...');
+
+    call.on('stream', (remoteStream) => {
+      const videoEl = document.getElementById(`video-${peerId}`);
+      if (videoEl) {
+        videoEl.srcObject = remoteStream;
+        updateConnectionStatus(peerId, '🟢 Online');
+      }
+    });
+    call.on('close', () => {
+      delete peerCalls[peerId];
+      updateConnectionStatus(peerId, '🔴 Offline');
+    });
+    call.on('error', () => {
+      delete peerCalls[peerId];
+      updateConnectionStatus(peerId, '🔴 Offline');
+    });
+
+    // Then send screen if active
     if (isScreenSharing && screenStream) {
       setTimeout(() => sendScreenToPeer(peerId), 500);
     }
@@ -1403,7 +1435,7 @@ function updateUserCount() {
 }
 
 // ============================================================
-// 18. SCREEN SHARE - FIXED
+// 18. SCREEN SHARE
 // ============================================================
 
 async function toggleScreenShare() {
@@ -1417,7 +1449,6 @@ async function toggleScreenShare() {
   }
   
   try {
-    // Request screen with audio
     screenStream = await navigator.mediaDevices.getDisplayMedia({
       video: {
         width: { ideal: 1920 },
@@ -1432,10 +1463,8 @@ async function toggleScreenShare() {
     document.getElementById('screenBtn').className = 'btn-danger';
     document.getElementById('screenBtnFallback').style.display = 'none';
     
-    // Display locally
     addRemoteScreenVideo('my-local-screen', screenStream, myUsername + ' (អ្នក)');
     
-    // Send to all peers
     const peerIds = Object.keys(peerCalls);
     if (peerIds.length === 0) {
       showToast('⏳ កំពុងរង់ចាំអ្នកប្រើផ្សេងទៀត...', 'info');
@@ -1445,7 +1474,6 @@ async function toggleScreenShare() {
       sendScreenToPeer(peerId);
     }
     
-    // Stop sharing when user clicks stop
     screenStream.getVideoTracks()[0].onended = () => {
       stopScreenShare();
     };
@@ -1469,7 +1497,6 @@ function stopScreenShare() {
   
   removeRemoteScreenVideo('my-local-screen');
   
-  // Close all screen calls and timers.
   for (const [peerId, call] of Object.entries(screenCalls)) {
     try { call.close(); } catch (e) {}
     if (screenCallTimers[peerId]) clearTimeout(screenCallTimers[peerId]);
@@ -1546,8 +1573,7 @@ function stopScreenShareFallback() {
   });
 }
 
-// Receive fallback as an image. This avoids creating a new MediaStream
-// for every frame, which was unstable on the previous implementation.
+// Receive fallback screen data
 socket.on('screen-data-fallback', (data) => {
   if (!data || data.fromPeerId === myId || !data.screenData) return;
 
@@ -1582,6 +1608,7 @@ socket.on('stop-screen-fallback', (data) => {
   if (!data || data.fromPeerId === myId) return;
   removeRemoteScreenVideo(data.fromPeerId);
 });
+
 // ============================================================
 // 20. MEDIA CONTROLS
 // ============================================================
