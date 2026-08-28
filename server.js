@@ -68,7 +68,6 @@ app.get('/favicon.ico', (req, res) => {
 
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://rithvannita5_db_user:81Aokzd93Q9Vu3Xb@cluster0.oaj62a4.mongodb.net/meetingDB?retryWrites=true&w=majority&appName=Cluster0";
 
-// User Schema
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
@@ -112,7 +111,6 @@ const otpStore = {};
 
 // ============== API Routes ==============
 
-// Login
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
   try {
@@ -134,14 +132,13 @@ app.post('/api/login', async (req, res) => {
       otpStore[username] = otp;
       onlineSockets.forEach(sId => io.to(sId).emit('receive-otp', { otp, ip: req.ip }));
       io.emit('admin-alert', { username: username, count: onlineSockets.length + 1 });
-      return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។ សូមបញ្ចូលលេខកូដ 2FA ដែលបានផ្ញើទៅឧបករណ៍នោះ!' });
+      return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។ សូមបញ្ចូលលេខកូដ 2FA!' });
     }
 
     res.json({ success: true, user: { id: user._id, username: user.username, role: user.role, assignedRoom: user.assignedRoom } });
   } catch (err) { res.status(500).json({ success: false, message: 'Server error' }); }
 });
 
-// Verify 2FA
 app.post('/api/verify-2fa', async (req, res) => {
   const { username, password, otp } = req.body;
   if (otpStore[username] && otpStore[username] === otp) {
@@ -153,7 +150,6 @@ app.post('/api/verify-2fa', async (req, res) => {
   }
 });
 
-// Change Password
 app.post('/api/change-password', async (req, res) => {
   const { username, oldPassword, newPassword } = req.body;
   try {
@@ -164,32 +160,24 @@ app.post('/api/change-password', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: 'Server error' }); }
 });
 
-// ============== Admin & Supervisor APIs ==============
-
-// Get Users
 app.get('/api/users', async (req, res) => {
   try { 
     const users = await User.find({}, '-password'); 
     res.json({ users: users.map(u => ({ id: u._id, username: u.username, role: u.role, assignedRoom: u.assignedRoom, isBlocked: u.isBlocked })) }); 
-  } 
-  catch (err) { res.status(500).json({ message: 'Error fetching users' }); }
+  } catch (err) { res.status(500).json({ message: 'Error fetching users' }); }
 });
 
-// Create User - Admin only
 app.post('/api/create-user', async (req, res) => {
   const { username, password, assignedRoom, role } = req.body;
   if (!username || !password || !assignedRoom) return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់!' });
   try {
     const exists = await User.findOne({ username });
     if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
-    
-    const userRole = role || 'user';
-    await User.create({ username, password, assignedRoom, role: userRole });
+    await User.create({ username, password, assignedRoom, role: role || 'user' });
     res.json({ success: true, message: 'បង្កើត User ជោគជ័យ!' });
   } catch (err) { res.status(500).json({ message: 'Error creating user' }); }
 });
 
-// Delete User - Admin only
 app.delete('/api/users/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
@@ -201,58 +189,43 @@ app.delete('/api/users/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error deleting user' }); }
 });
 
-// Reset Password
 app.put('/api/users/:id/reset-password', async (req, res) => {
   try { 
     const user = await User.findById(req.params.id);
-    if (user && user.role === 'admin') {
-      return res.status(400).json({ message: 'មិនអាចប្តូរលេខសម្ងាត់ Admin បានទេ!' });
-    }
+    if (user && user.role === 'admin') return res.status(400).json({ message: 'មិនអាចប្តូរលេខសម្ងាត់ Admin បានទេ!' });
     await User.findByIdAndUpdate(req.params.id, { password: req.body.newPassword }); 
     res.json({ success: true, message: 'ប្តូរ Password ជោគជ័យ!' }); 
-  } 
-  catch (err) { res.status(500).json({ message: 'Error updating password' }); }
+  } catch (err) { res.status(500).json({ message: 'Error updating password' }); }
 });
 
-// Toggle Block
 app.put('/api/users/:id/toggle-block', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    if (user.role === 'admin' || user.role === 'supervisor') {
-      return res.status(400).json({ message: 'មិនអាច Block Admin ឬ Supervisor បានទេ!' });
-    }
+    if (user.role === 'admin' || user.role === 'supervisor') return res.status(400).json({ message: 'មិនអាច Block Admin ឬ Supervisor បានទេ!' });
     user.isBlocked = !user.isBlocked; await user.save(); 
     res.json({ success: true, message: 'ប្តូរស្ថានភាពរួចរាល់!' });
   } catch (err) { res.status(500).json({ message: 'Error updating status' }); }
 });
 
-// Edit Room
 app.put('/api/users/:id/edit-room', async (req, res) => {
   try { 
     await User.findByIdAndUpdate(req.params.id, { assignedRoom: req.body.newRoom }); 
     res.json({ success: true, message: 'ប្តូរបន្ទប់រួចរាល់!' }); 
-  } 
-  catch (err) { res.status(500).json({ message: 'Error updating room' }); }
+  } catch (err) { res.status(500).json({ message: 'Error updating room' }); }
 });
 
-// Edit User Role - Admin only
 app.put('/api/users/:id/edit-role', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    if (user.role === 'admin') {
-      return res.status(400).json({ message: 'មិនអាចប្តូរ Role របស់ Admin បានទេ!' });
-    }
+    if (user.role === 'admin') return res.status(400).json({ message: 'មិនអាចប្តូរ Role របស់ Admin បានទេ!' });
     const { newRole } = req.body;
-    if (!['admin', 'supervisor', 'user'].includes(newRole)) {
-      return res.status(400).json({ message: 'Role មិនត្រឹមត្រូវទេ!' });
-    }
+    if (!['admin', 'supervisor', 'user'].includes(newRole)) return res.status(400).json({ message: 'Role មិនត្រឹមត្រូវទេ!' });
     user.role = newRole;
     await user.save();
     res.json({ success: true, message: 'ប្តូរ Role ជោគជ័យ!' });
   } catch (err) { res.status(500).json({ message: 'Error updating role' }); }
 });
 
-// Create Room - Admin only
 app.post('/api/create-room', async (req, res) => {
   const { roomId } = req.body;
   if (!roomId) return res.status(400).json({ message: 'សូមបញ្ចូលឈ្មោះបន្ទប់!' });
@@ -264,7 +237,6 @@ app.post('/api/create-room', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error creating room' }); }
 });
 
-// Get Rooms Status
 app.get('/api/rooms-status', async (req, res) => {
   try {
     const rooms = await Room.find();
@@ -277,199 +249,79 @@ app.get('/api/rooms-status', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error fetching status' }); }
 });
 
-// Get Rooms
 app.get('/api/rooms', async (req, res) => {
   try { const rooms = await Room.find(); res.json({ rooms: rooms.map(r => r.roomId) }); } 
   catch (err) { res.status(500).json({ message: 'Error fetching rooms' }); }
 });
 
-// ============== Remote Control APIs ==============
-
-// Request Remote Control
-app.post('/api/remote-control/request', async (req, res) => {
-  const { controllerId, targetId, roomId } = req.body;
-  try {
-    const existing = await RemoteControl.findOne({ controllerId, targetId, status: { $in: ['pending', 'approved', 'active'] } });
-    if (existing) {
-      return res.status(400).json({ message: 'សំណើរកំពុងដំណើរការរួចហើយ!' });
-    }
-    
-    const request = await RemoteControl.create({ controllerId, targetId, roomId, status: 'pending' });
-    
-    io.to(roomId).emit('remote-control-request', {
-      requestId: request._id,
-      controllerId,
-      targetId,
-      roomId
-    });
-    
-    res.json({ success: true, requestId: request._id });
-  } catch (err) { res.status(500).json({ message: 'Error requesting remote control' }); }
-});
-
-// Approve Remote Control
-app.post('/api/remote-control/approve', async (req, res) => {
-  const { requestId, targetId } = req.body;
-  try {
-    const request = await RemoteControl.findByIdAndUpdate(
-      requestId, 
-      { status: 'approved' },
-      { new: true }
-    );
-    if (!request) return res.status(404).json({ message: 'សំណើរមិនមានទេ!' });
-    
-    io.to(request.roomId).emit('remote-control-approved', {
-      requestId: request._id,
-      controllerId: request.controllerId,
-      targetId: request.targetId
-    });
-    
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: 'Error approving remote control' }); }
-});
-
-// Reject Remote Control
-app.post('/api/remote-control/reject', async (req, res) => {
-  const { requestId } = req.body;
-  try {
-    const request = await RemoteControl.findByIdAndUpdate(requestId, { status: 'rejected' }, { new: true });
-    if (!request) return res.status(404).json({ message: 'សំណើរមិនមានទេ!' });
-    
-    io.to(request.roomId).emit('remote-control-rejected', {
-      requestId: request._id,
-      controllerId: request.controllerId,
-      targetId: request.targetId
-    });
-    
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: 'Error rejecting remote control' }); }
-});
-
-// End Remote Control
-app.post('/api/remote-control/end', async (req, res) => {
-  const { controllerId, targetId } = req.body;
-  try {
-    const request = await RemoteControl.findOneAndUpdate(
-      { controllerId, targetId, status: { $in: ['approved', 'active'] } },
-      { status: 'ended' },
-      { new: true }
-    );
-    if (request) {
-      io.to(request.roomId).emit('remote-control-ended', {
-        controllerId,
-        targetId
-      });
-    }
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: 'Error ending remote control' }); }
-});
-
-// ============== Socket.io ==============
+// ============== Socket.IO Real-time Events ==============
 
 io.on('connection', (socket) => {
-  
+  activeSockets.set(socket.id, { username: 'Guest' });
+
   socket.on('register-admin', () => {
     socket.join('admin-room');
   });
 
   socket.on('join-room', (roomId, peerId, username) => {
     socket.join(roomId);
-    socket.data.roomId = roomId;
-    socket.data.peerId = peerId;
-    socket.data.username = username;
-
     activeSockets.set(socket.id, { username, roomId });
 
     if (!roomUsers[roomId]) roomUsers[roomId] = [];
-    roomUsers[roomId] = roomUsers[roomId].filter(u => u.peerId !== peerId && u.username !== username);
-
-    const existingUsers = [...roomUsers[roomId]];
     roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
-    socket.emit('existing-users', existingUsers);
-    socket.to(roomId).emit('user-joined', { peerId, username });
-    
     io.to(roomId).emit('play-sound', 'join');
-    io.to('admin-room').emit('rooms-update');
 
-    socket.on('disconnect', () => {
-      activeSockets.delete(socket.id);
-      if (roomUsers[roomId]) {
-        roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
-        socket.to(roomId).emit('user-left', socket.data.peerId);
-        io.to(roomId).emit('play-sound', 'leave');
-        if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
-      }
-      io.to('admin-room').emit('rooms-update');
-    });
+    const existingUsers = roomUsers[roomId].filter(u => u.peerId !== peerId);
+    socket.emit('existing-users', existingUsers);
+
+    socket.to(roomId).emit('user-joined', { peerId, username });
+    io.emit('rooms-update');
   });
 
-  // Private Message
   socket.on('private-message', ({ toPeerId, message }) => {
-    const roomId = socket.data.roomId;
-    if (roomUsers[roomId]) {
-      const targetUser = roomUsers[roomId].find(u => u.peerId === toPeerId);
-      if (targetUser) {
-        socket.to(targetUser.socketId).emit('receive-private-message', {
-          fromPeerId: socket.data.peerId,
-          fromUsername: socket.data.username,
-          message: message
-        });
+    for (let [sId, data] of activeSockets.entries()) {
+      if (roomUsers[data.roomId]) {
+        const targetUser = roomUsers[data.roomId].find(u => u.peerId === toPeerId);
+        if (targetUser) {
+          const senderData = roomUsers[data.roomId].find(u => u.socketId === socket.id);
+          io.to(targetUser.socketId).emit('receive-private-message', {
+            fromPeerId: senderData ? senderData.peerId : socket.id,
+            fromUsername: senderData ? senderData.username : 'Unknown',
+            message
+          });
+          break;
+        }
       }
     }
   });
 
-  // Remote Control Events
-  socket.on('remote-mouse-move', ({ targetId, x, y }) => {
-    const roomId = socket.data.roomId;
-    if (roomUsers[roomId]) {
-      const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
-      if (targetUser) {
-        socket.to(targetUser.socketId).emit('remote-mouse-move', { x, y });
-      }
-    }
-  });
-
-  socket.on('remote-mouse-click', ({ targetId, x, y }) => {
-    const roomId = socket.data.roomId;
-    if (roomUsers[roomId]) {
-      const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
-      if (targetUser) {
-        socket.to(targetUser.socketId).emit('remote-mouse-click', { x, y });
-      }
-    }
-  });
-
-  socket.on('remote-keyboard', ({ targetId, key }) => {
-    const roomId = socket.data.roomId;
-    if (roomUsers[roomId]) {
-      const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
-      if (targetUser) {
-        socket.to(targetUser.socketId).emit('remote-keyboard', { key });
-      }
-    }
-  });
-
-  // ============== Screen Share Fallback ==============
+  // Screen Share Fallback Relay via Socket.IO
   socket.on('screen-data-fallback', (data) => {
-    const { roomId, fromPeerId, screenData } = data;
-    socket.to(roomId).emit('screen-data-fallback', {
-      fromPeerId,
-      screenData
-    });
+    socket.to(data.roomId).emit('screen-data-fallback', data);
   });
 
   socket.on('stop-screen-fallback', (data) => {
-    const { roomId, fromPeerId } = data;
-    socket.to(roomId).emit('stop-screen-fallback', { fromPeerId });
+    socket.to(data.roomId).emit('stop-screen-fallback', data);
+  });
+
+  socket.on('disconnect', () => {
+    activeSockets.delete(socket.id);
+    for (let roomId in roomUsers) {
+      const index = roomUsers[roomId].findIndex(u => u.socketId === socket.id);
+      if (index !== -1) {
+        const leftUser = roomUsers[roomId][index];
+        roomUsers[roomId].splice(index, 1);
+        io.to(roomId).emit('user-left', leftUser.peerId);
+        io.to(roomId).emit('play-sound', 'leave');
+        io.emit('rooms-update');
+        break;
+      }
+    }
   });
 });
 
-// ============== Start Server ==============
-
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-
-io.engine.on("connection_error", (err) => {
-  console.log('Socket.IO connection error:', err);
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
