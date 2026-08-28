@@ -2,7 +2,7 @@
 // SOCKET.IO CONNECTION - FIXED FOR RENDER
 // ============================================================
 const socket = io({
-  transports: ['polling', 'websocket'],
+  transports: ['websocket'], // Only WebSocket
   reconnection: true,
   reconnectionAttempts: 10,
   reconnectionDelay: 1000,
@@ -11,15 +11,19 @@ const socket = io({
   autoConnect: true,
   forceNew: true,
   path: '/socket.io',
-  upgrade: true,
-  rememberUpgrade: true
+  upgrade: false // Don't upgrade, use WebSocket directly
 });
-
 // ============================================================
 // SOCKET EVENT HANDLERS
 // ============================================================
 socket.on('connect_error', (error) => {
   console.log('❌ Socket.IO connection error:', error);
+  // If WebSocket fails, try polling as fallback
+  if (error.message === 'websocket error') {
+    console.log('🔄 Falling back to polling...');
+    socket.io.opts.transports = ['polling', 'websocket'];
+    socket.connect();
+  }
   showToast('⚠️ កំពុងព្យាយាមភ្ជាប់ Server...', 'warning');
 });
 
@@ -41,6 +45,11 @@ socket.on('reconnect_attempt', (attempt) => {
 
 socket.on('reconnect', (attempt) => {
   console.log(`✅ Reconnected after ${attempt} attempts`);
+});
+
+socket.on('reconnect_failed', () => {
+  console.log('❌ Reconnect failed');
+  showToast('❌ មិនអាចភ្ជាប់ Server បានទេ!', 'error');
 });
 
 // ============================================================
