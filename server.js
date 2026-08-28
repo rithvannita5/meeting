@@ -296,4 +296,180 @@ app.post('/api/remote-control/request', async (req, res) => {
     
     const request = await RemoteControl.create({ controllerId, targetId, roomId, status: 'pending' });
     
-    io
+    io.to(roomId).emit('remote-control-request', {
+      requestId: request._id,
+      controllerId,
+      targetId,
+      roomId
+    });
+    
+    res.json({ success: true, requestId: request._id });
+  } catch (err) { res.status(500).json({ message: 'Error requesting remote control' }); }
+});
+
+// Approve Remote Control
+app.post('/api/remote-control/approve', async (req, res) => {
+  const { requestId, targetId } = req.body;
+  try {
+    const request = await RemoteControl.findByIdAndUpdate(
+      requestId, 
+      { status: 'approved' },
+      { new: true }
+    );
+    if (!request) return res.status(404).json({ message: 'សំណើរមិនមានទេ!' });
+    
+    io.to(request.roomId).emit('remote-control-approved', {
+      requestId: request._id,
+      controllerId: request.controllerId,
+      targetId: request.targetId
+    });
+    
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ message: 'Error approving remote control' }); }
+});
+
+// Reject Remote Control
+app.post('/api/remote-control/reject', async (req, res) => {
+  const { requestId } = req.body;
+  try {
+    const request = await RemoteControl.findByIdAndUpdate(requestId, { status: 'rejected' }, { new: true });
+    if (!request) return res.status(404).json({ message: 'សំណើរមិនមានទេ!' });
+    
+    io.to(request.roomId).emit('remote-control-rejected', {
+      requestId: request._id,
+      controllerId: request.controllerId,
+      targetId: request.targetId
+    });
+    
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ message: 'Error rejecting remote control' }); }
+});
+
+// End Remote Control
+app.post('/api/remote-control/end', async (req, res) => {
+  const { controllerId, targetId } = req.body;
+  try {
+    const request = await RemoteControl.findOneAndUpdate(
+      { controllerId, targetId, status: { $in: ['approved', 'active'] } },
+      { status: 'ended' },
+      { new: true }
+    );
+    if (request) {
+      io.to(request.roomId).emit('remote-control-ended', {
+        controllerId,
+        targetId
+      });
+    }
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ message: 'Error ending remote control' }); }
+});
+
+// ============== Socket.io ==============
+
+io.on('connection', (socket) => {
+  
+  socket.on('register-admin', () => {
+    socket.join('admin-room');
+  });
+
+  socket.on('join-room', (roomId, peerId, username) => {
+    socket.join(roomId);
+    socket.data.roomId = roomId;
+    socket.data.peerId = peerId;
+    socket.data.username = username;
+
+    activeSockets.set(socket.id, { username, roomId });
+
+    if (!roomUsers[roomId]) roomUsers[roomId] = [];
+    roomUsers[roomId] = roomUsers[roomId].filter(u => u.peerId !== peerId && u.username !== username);
+
+    const existingUsers = [...roomUsers[roomId]];
+    roomUsers[roomId].push({ socketId: socket.id, peerId, username });
+
+    socket.emit('existing-users', existingUsers);
+    socket.to(roomId).emit('user-joined', { peerId, username });
+    
+    io.to(roomId).emit('play-sound', 'join');
+    io.to('admin-room').emit('rooms-update');
+
+    socket.on('disconnect', () => {
+      activeSockets.delete(socket.id);
+      if (roomUsers[roomId]) {
+        roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
+        socket.to(roomId).emit('user-left', socket.data.peerId);
+        io.to(roomId).emit('play-sound', 'leave');
+        if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
+      }
+      io.to('admin-room').emit('rooms-update');
+    });
+  });
+
+  // Private Message
+  socket.on('private-message', ({ toPeerId, message }) => {
+    const roomId = socket.data.roomId;
+    if (roomUsers[roomId]) {
+      const targetUser = roomUsers[roomId].find(u => u.peerId === toPeerId);
+      if (targetUser) {
+        socket.to(targetUser.socketId).emit('receive-private-message', {
+          fromPeerId: socket.data.peerId,
+          fromUsername: socket.data.username,
+          message: message
+        });
+      }
+    }
+  });
+
+  // Remote Control Events
+  socket.on('remote-mouse-move', ({ targetId, x, y }) => {
+    const roomId = socket.data.roomId;
+    if (roomUsers[roomId]) {
+      const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
+      if (targetUser) {
+        socket.to(targetUser.socketId).emit('remote-mouse-move', { x, y });
+      }
+    }
+  });
+
+  socket.on('remote-mouse-click', ({ targetId, x, y }) => {
+    const roomId = socket.data.roomId;
+    if (roomUsers[roomId]) {
+      const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
+      if (targetUser) {
+        socket.to(targetUser.socketId).emit('remote-mouse-click', { x, y });
+      }
+    }
+  });
+
+  socket.on('remote-keyboard', ({ targetId, key }) => {
+    const roomId = socket.data.roomId;
+    if (roomUsers[roomId]) {
+      const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
+      if (targetUser) {
+        socket.to(targetUser.socketId).emit('remote-keyboard', { key });
+      }
+    }
+  });
+
+  // ============== Screen Share Fallback ==============
+  socket.on('screen-data-fallback', (data) => {
+    const { roomId, fromPeerId, screenData } = data;
+    socket.to(roomId).emit('screen-data-fallback', {
+      fromPeerId,
+      screenData
+    });
+  });
+
+  socket.on('stop-screen-fallback', (data) => {
+    const { roomId, fromPeerId } = data;
+    socket.to(roomId).emit('stop-screen-fallback', { fromPeerId });
+  });
+});
+
+// ============== Start Server ==============
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+io.engine.on("connection_error", (err) => {
+  console.log('Socket.IO connection error:', err);
+});
