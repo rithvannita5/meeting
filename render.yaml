@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: meeting-app
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 18.17.0
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /
+    autoDeploy: true
+    # ========== FIX: WebSocket Support ==========
+    websocket: true
+    # ========== FIX: Keep-alive settings ==========
+    scaling:
+      minInstances: 1
+      maxInstances: 1
+    # ========== FIX: Port ==========
+    port: 3000
