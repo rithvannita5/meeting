@@ -186,58 +186,55 @@ app.post('/api/login', async (req, res) => {
       return res.json({ success: false, message: 'សូមបំពេញ Username និង Password!' });
     }
     
-    // ✅ Use fallback if MongoDB not connected
-    if (mongoose.connection.readyState !== 1) {
-      console.log('⚠️ MongoDB not connected, using fallback login');
-      
-      const user = FALLBACK_USERS[username];
-      if (!user) {
-        return res.json({ success: false, message: 'Username មិនត្រឹមត្រូវ!' });
-      }
-      
-      if (user.password !== password) {
-        return res.json({ success: false, message: 'Password មិនត្រឹមត្រូវ!' });
-      }
-      
+    // ✅ FALLBACK USERS (ប្រើពេល MongoDB មិនភ្ជាប់ ឬគ្មាន User)
+    const FALLBACK_USERS = {
+      'admin': { password: 'admin123', role: 'admin', assignedRoom: 'room-1' },
+      'supervisor': { password: 'user123', role: 'supervisor', assignedRoom: 'room-1' },
+      'rith': { password: 'user123', role: 'user', assignedRoom: 'room-1' },
+      'sokha': { password: 'user123', role: 'user', assignedRoom: 'room-1' },
+      'dara': { password: 'user123', role: 'user', assignedRoom: 'room-1' }
+    };
+    
+    // ✅ ពិនិត្យ Fallback មុន
+    const fallbackUser = FALLBACK_USERS[username];
+    if (fallbackUser && fallbackUser.password === password) {
       console.log('✅ Login successful (fallback):', username);
       return res.json({
         success: true,
         user: {
           username: username,
-          role: user.role,
-          assignedRoom: user.assignedRoom
+          role: fallbackUser.role,
+          assignedRoom: fallbackUser.assignedRoom
         }
       });
     }
     
-    // Normal MongoDB login
-    const user = await User.findOne({ username });
-    if (!user) {
-      return res.json({ success: false, message: 'Username មិនត្រឹមត្រូវ!' });
-    }
-    
-    const isValidPassword = bcrypt.compareSync(password, user.password);
-    if (!isValidPassword) {
-      return res.json({ success: false, message: 'Password មិនត្រឹមត្រូវ!' });
-    }
-    
-    if (user.isBlocked) {
-      return res.json({ success: false, message: 'គណនីរបស់អ្នកត្រូវបាន Blocked!' });
-    }
-    
-    console.log('✅ Login successful:', username);
-    res.json({
-      success: true,
-      user: {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-        assignedRoom: user.assignedRoom
+    // ✅ ប្រសិនបើ MongoDB ភ្ជាប់ សាកល្បង Login ជាមួយ Database
+    if (mongoose.connection.readyState === 1) {
+      const user = await User.findOne({ username });
+      if (user) {
+        const isValidPassword = bcrypt.compareSync(password, user.password);
+        if (isValidPassword && !user.isBlocked) {
+          console.log('✅ Login successful (MongoDB):', username);
+          return res.json({
+            success: true,
+            user: {
+              id: user._id,
+              username: user.username,
+              role: user.role,
+              assignedRoom: user.assignedRoom
+            }
+          });
+        }
       }
-    });
+    }
+    
+    // ❌ ប្រសិនបើ Fallback និង MongoDB មិនជោគជ័យ
+    return res.json({ success: false, message: 'Username ឬ Password មិនត្រឹមត្រូវ!' });
+    
   } catch (err) {
     console.error('Login error:', err);
-    res.json({ success: false, message: 'មានបញ្ហាក្នុងការ Login! សូមព្យាយាមម្តងទៀត' });
+    res.json({ success: false, message: 'មានបញ្ហាក្នុងការ Login!' });
   }
 });
 
