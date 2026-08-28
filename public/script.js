@@ -41,7 +41,13 @@ let isChatOpen = false;
 let autoReplyEnabled = true;
 
 // ============================================================
-// 4. SOCKET EVENT LISTENERS
+// 4. SCREEN SHARE FALLBACK VARIABLES
+// ============================================================
+let isScreenShareFallback = false;
+let screenCaptureInterval = null;
+
+// ============================================================
+// 5. SOCKET EVENT LISTENERS
 // ============================================================
 
 socket.on('rooms-update', () => {
@@ -66,7 +72,7 @@ socket.on('admin-alert', (data) => {
 });
 
 // ============================================================
-// 5. REMOTE CONTROL SOCKET EVENTS
+// 6. REMOTE CONTROL SOCKET EVENTS
 // ============================================================
 
 socket.on('remote-control-request', (data) => {
@@ -155,7 +161,7 @@ socket.on('remote-keyboard', (data) => {
 });
 
 // ============================================================
-// 6. PRIVATE CHAT WITH NOTIFICATIONS
+// 7. PRIVATE CHAT WITH NOTIFICATIONS
 // ============================================================
 
 socket.on('receive-private-message', (data) => {
@@ -190,7 +196,7 @@ socket.on('receive-private-message', (data) => {
 });
 
 // ============================================================
-// 7. USER JOIN/LEAVE EVENTS
+// 8. USER JOIN/LEAVE EVENTS
 // ============================================================
 
 socket.on('existing-users', (users) => {
@@ -211,7 +217,13 @@ socket.on('user-joined', ({ peerId, username }) => {
     updateChatUserList();
 
     if (isScreenSharing && screenStream) {
-      setTimeout(() => myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } }), 1200);
+      setTimeout(() => {
+        if (myPeer && screenStream) {
+          myPeer.call(peerId, screenStream, { 
+            metadata: { type: 'screen', username: myUsername } 
+          });
+        }
+      }, 1200);
     }
   }
 });
@@ -226,7 +238,7 @@ socket.on('user-left', (peerId) => {
 });
 
 // ============================================================
-// 8. SOUND NOTIFICATION
+// 9. SOUND NOTIFICATION
 // ============================================================
 
 function playNotificationSound(type) {
@@ -274,7 +286,7 @@ function playNotificationSound(type) {
 }
 
 // ============================================================
-// 9. CHAT NOTIFICATION FUNCTIONS
+// 10. CHAT NOTIFICATION FUNCTIONS
 // ============================================================
 
 function updateChatBadge() {
@@ -345,7 +357,7 @@ function closeChatNotification(element) {
 }
 
 // ============================================================
-// 10. REMOTE CONTROL FUNCTIONS
+// 11. REMOTE CONTROL FUNCTIONS
 // ============================================================
 
 function requestRemoteControl(targetId) {
@@ -505,7 +517,7 @@ function selectRemoteTarget(targetId) {
 }
 
 // ============================================================
-// 11. TOAST NOTIFICATION
+// 12. TOAST NOTIFICATION
 // ============================================================
 
 function showToast(message, type = 'info') {
@@ -532,7 +544,7 @@ function showToast(message, type = 'info') {
 }
 
 // ============================================================
-// 12. ADMIN FUNCTIONS
+// 13. ADMIN FUNCTIONS
 // ============================================================
 
 function switchAdminTab(tab) {
@@ -659,7 +671,7 @@ function adminJoinRoom(roomId) {
 }
 
 // ============================================================
-// 13. ADMIN CRUD OPERATIONS
+// 14. ADMIN CRUD OPERATIONS
 // ============================================================
 
 async function toggleBlockUser(id) {
@@ -776,7 +788,7 @@ async function createNewRoom() {
 }
 
 // ============================================================
-// 14. AUTHENTICATION
+// 15. AUTHENTICATION
 // ============================================================
 
 async function login() {
@@ -885,7 +897,7 @@ function logoutAdmin() {
 }
 
 // ============================================================
-// 15. PRIVATE CHAT UI
+// 16. PRIVATE CHAT UI
 // ============================================================
 
 function toggleChat() {
@@ -938,7 +950,7 @@ function sendPrivateMsg() {
 }
 
 // ============================================================
-// 16. WEBRTC / PEERJS
+// 17. WEBRTC / PEERJS
 // ============================================================
 
 function createActiveDummyVideoTrack() {
@@ -978,7 +990,7 @@ async function startMeeting() {
   localStream = new MediaStream([audioTrack, createActiveDummyVideoTrack()]);
   localVideo.srcObject = localStream;
 
-  // FIX: Use external PeerServer with TURN for cross-network
+  // ========== FIX: USE EXTERNAL PEERSERVER WITH TURN ==========
   myPeer = new Peer(undefined, {
     host: '0.peerjs.com',
     port: 443,
@@ -989,23 +1001,35 @@ async function startMeeting() {
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
         {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          urls: [
+            'turn:openrelay.metered.ca:80',
+            'turn:openrelay.metered.ca:443',
+            'turn:openrelay.metered.ca:443?transport=tcp'
+          ],
           username: 'openrelayproject',
           credential: 'openrelayproject'
         }
-      ]
+      ],
+      iceTransportPolicy: 'all',
+      iceCandidatePoolSize: 10
     }
+  });
+
+  // Debug - Log connection status
+  myPeer.on('connection', (conn) => {
+    console.log('🔗 Peer connection established:', conn.peer);
+  });
+
+  myPeer.on('disconnected', () => {
+    console.log('🔗 Peer disconnected');
+    showToast('⚠️ Connection lost! Reconnecting...', 'warning');
+  });
+
+  myPeer.on('error', (err) => {
+    console.error('🔗 Peer error:', err);
   });
 
   myPeer.on('open', (id) => {
@@ -1013,32 +1037,54 @@ async function startMeeting() {
     document.getElementById('room-container').classList.remove('hidden');
     document.getElementById('welcome-text').innerText = `👋 សួស្តី ${myUsername} | បន្ទប់: ${currentRoomId}`;
     socket.emit('join-room', currentRoomId, id, myUsername);
+    showToast('✅ Connected to Peer Server!', 'success');
   });
 
   myPeer.on('call', (call) => {
     const callType = call.metadata ? call.metadata.type : 'camera';
     const callerName = call.metadata ? call.metadata.username : 'ដៃគូ';
 
+    console.log('📞 Incoming call type:', callType, 'from:', callerName);
+
+    // Handle Screen Share - FIXED
     if (callType === 'screen') {
+      console.log('📺 Receiving screen share from:', callerName);
+      
       call.answer();
-      call.on('stream', (remoteScreenStream) => addRemoteScreenVideo(call.peer, remoteScreenStream, callerName));
-      call.on('close', () => removeRemoteScreenVideo(call.peer));
-    } else {
-      call.answer(isCameraOn ? cameraStream : localStream);
-      peerCalls[call.peer] = call;
-      addRemoteVideo(call.peer, callerName);
-      call.on('stream', (remoteStream) => {
-        const videoEl = document.getElementById(`video-${call.peer}`);
-        if (videoEl) {
-          videoEl.srcObject = remoteStream;
-          updateConnectionStatus(call.peer, '🟢 Online');
-        }
+      
+      call.on('stream', (remoteScreenStream) => {
+        console.log('📺 Screen stream received from:', callerName);
+        addRemoteScreenVideo(call.peer, remoteScreenStream, callerName);
+        showToast(`🖥️ ${callerName} កំពុងចែករំលែក Screen!`, 'info');
       });
+      
       call.on('close', () => {
-        delete peerCalls[call.peer];
-        updateConnectionStatus(call.peer, '🔴 Offline');
+        console.log('📺 Screen share closed from:', callerName);
+        removeRemoteScreenVideo(call.peer);
       });
+      
+      call.on('error', (err) => {
+        console.error('📺 Screen share error:', err);
+      });
+      
+      return;
     }
+
+    // Handle Camera
+    call.answer(isCameraOn ? cameraStream : localStream);
+    peerCalls[call.peer] = call;
+    addRemoteVideo(call.peer, callerName);
+    call.on('stream', (remoteStream) => {
+      const videoEl = document.getElementById(`video-${call.peer}`);
+      if (videoEl) {
+        videoEl.srcObject = remoteStream;
+        updateConnectionStatus(call.peer, '🟢 Online');
+      }
+    });
+    call.on('close', () => {
+      delete peerCalls[call.peer];
+      updateConnectionStatus(call.peer, '🔴 Offline');
+    });
   });
 
   socket.off('existing-users');
@@ -1063,7 +1109,13 @@ async function startMeeting() {
       updateChatUserList();
 
       if (isScreenSharing && screenStream) {
-        setTimeout(() => myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } }), 1200);
+        setTimeout(() => {
+          if (myPeer && screenStream) {
+            myPeer.call(peerId, screenStream, { 
+              metadata: { type: 'screen', username: myUsername } 
+            });
+          }
+        }, 1200);
       }
     }
   });
@@ -1154,6 +1206,7 @@ function removeRemoteVideo(peerId) {
 function addRemoteScreenVideo(peerId, stream, sharerName) {
   screenGrid.style.display = 'grid';
   document.getElementById('screenTitle').style.display = 'block';
+  
   let screenContainer = document.getElementById(`screen-container-${peerId}`);
   if (!screenContainer) {
     screenContainer = document.createElement('div');
@@ -1165,10 +1218,13 @@ function addRemoteScreenVideo(peerId, stream, sharerName) {
     `;
     screenGrid.appendChild(screenContainer);
   }
+  
   const screenVideo = document.getElementById(`screen-video-${peerId}`);
   if (screenVideo) {
     screenVideo.srcObject = stream;
     screenVideo.onclick = () => makeFullscreen(screenVideo);
+    // Force play
+    screenVideo.play().catch(() => {});
   }
 }
 
@@ -1187,7 +1243,218 @@ function updateUserCount() {
 }
 
 // ============================================================
-// 17. MEDIA CONTROLS
+// 18. SCREEN SHARE - FIXED
+// ============================================================
+
+async function toggleScreenShare() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    return showToast('⚠️ មុខងារ Share Screen អាចដំណើរការបានតែលើកុំព្យូទ័រប៉ុណ្ណោះ!', 'warning');
+  }
+  
+  if (isScreenSharing) {
+    stopScreenShare();
+    return;
+  }
+  
+  try {
+    // Request screen with audio
+    screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 }
+      },
+      audio: true
+    });
+    
+    isScreenSharing = true;
+    document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing';
+    document.getElementById('screenBtn').className = 'btn-danger';
+    document.getElementById('screenBtnFallback').style.display = 'none';
+    
+    // Display locally
+    addRemoteScreenVideo('my-local-screen', screenStream, myUsername + ' (អ្នក)');
+    
+    // Send to all peers with retry
+    const peerIds = Object.keys(peerCalls);
+    if (peerIds.length === 0) {
+      showToast('⏳ កំពុងរង់ចាំអ្នកប្រើផ្សេងទៀត...', 'info');
+    }
+    
+    for (const peerId of peerIds) {
+      try {
+        const call = myPeer.call(peerId, screenStream, { 
+          metadata: { type: 'screen', username: myUsername } 
+        });
+        
+        call.on('close', () => {
+          console.log('Screen share call closed for:', peerId);
+        });
+        
+        call.on('error', (err) => {
+          console.error('Screen share error for', peerId, err);
+          // Try fallback
+          if (isScreenSharing) {
+            showToast('⚠️ Screen Share error, trying fallback...', 'warning');
+            document.getElementById('screenBtnFallback').style.display = 'inline-block';
+          }
+        });
+        
+      } catch (err) {
+        console.error('Failed to call peer for screen share:', err);
+      }
+    }
+    
+    // Stop sharing when user clicks stop
+    screenStream.getVideoTracks()[0].onended = () => {
+      stopScreenShare();
+    };
+    
+    showToast('✅ កំពុងចែករំលែក Screen!', 'success');
+    
+  } catch (err) {
+    console.error('Screen share error:', err);
+    showToast('❌ មិនអាច Share Screen បានទេ: ' + err.message, 'error');
+    // Show fallback button
+    document.getElementById('screenBtnFallback').style.display = 'inline-block';
+  }
+}
+
+function stopScreenShare() {
+  if (!isScreenSharing) return;
+  
+  isScreenSharing = false;
+  document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
+  document.getElementById('screenBtn').className = 'btn-warning';
+  document.getElementById('screenBtnFallback').style.display = 'none';
+  
+  removeRemoteScreenVideo('my-local-screen');
+  
+  if (screenStream) {
+    screenStream.getTracks().forEach(track => track.stop());
+    screenStream = null;
+  }
+  
+  showToast('⏹️ បានបញ្ឈប់ Screen Share', 'info');
+}
+
+// ============================================================
+// 19. SCREEN SHARE FALLBACK (Socket.IO)
+// ============================================================
+
+async function toggleScreenShareFallback() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    return showToast('⚠️ មុខងារ Share Screen អាចដំណើរការបានតែលើកុំព្យូទ័រប៉ុណ្ណោះ!', 'warning');
+  }
+  
+  if (isScreenShareFallback) {
+    stopScreenShareFallback();
+    return;
+  }
+  
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { 
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 15 }
+      },
+      audio: false
+    });
+    
+    isScreenShareFallback = true;
+    document.getElementById('screenBtnFallback').innerHTML = '🛑 Stop (Fallback)';
+    document.getElementById('screenBtnFallback').className = 'btn-danger';
+    document.getElementById('screenBtn').style.display = 'none';
+    
+    addRemoteScreenVideo('my-local-screen-fallback', stream, myUsername + ' (Fallback)');
+    
+    const videoTrack = stream.getVideoTracks()[0];
+    const imageCapture = new ImageCapture(videoTrack);
+    
+    screenCaptureInterval = setInterval(async () => {
+      try {
+        const bitmap = await imageCapture.grabFrame();
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.min(bitmap.width, 800);
+        canvas.height = Math.min(bitmap.height, 600);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        const imageData = canvas.toDataURL('image/jpeg', 0.3);
+        
+        socket.emit('screen-data-fallback', {
+          roomId: currentRoomId,
+          fromPeerId: myId,
+          screenData: imageData
+        });
+        
+      } catch (err) {
+        console.error('Capture error:', err);
+      }
+    }, 200);
+    
+    stream.getVideoTracks()[0].onended = () => {
+      stopScreenShareFallback();
+    };
+    
+    showToast('✅ Fallback Screen Share started!', 'success');
+    
+  } catch (err) {
+    console.error('Fallback screen share error:', err);
+    showToast('❌ មិនអាច Share Screen បានទេ!', 'error');
+  }
+}
+
+function stopScreenShareFallback() {
+  isScreenShareFallback = false;
+  if (screenCaptureInterval) {
+    clearInterval(screenCaptureInterval);
+    screenCaptureInterval = null;
+  }
+  document.getElementById('screenBtnFallback').innerHTML = '📡 Share (Fallback)';
+  document.getElementById('screenBtnFallback').className = 'btn-secondary';
+  document.getElementById('screenBtn').style.display = 'inline-block';
+  removeRemoteScreenVideo('my-local-screen-fallback');
+  
+  socket.emit('stop-screen-fallback', { roomId: currentRoomId, fromPeerId: myId });
+}
+
+// Receive fallback screen data
+socket.on('screen-data-fallback', (data) => {
+  if (data.fromPeerId === myId) return;
+  
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    
+    const stream = canvas.captureStream(10);
+    
+    let screenContainer = document.getElementById(`screen-container-${data.fromPeerId}`);
+    if (!screenContainer) {
+      const sharerName = userNamesMap[data.fromPeerId] || 'មិត្តភក្តិ';
+      addRemoteScreenVideo(data.fromPeerId, stream, sharerName + ' (Fallback)');
+    } else {
+      const video = document.getElementById(`screen-video-${data.fromPeerId}`);
+      if (video) {
+        video.srcObject = stream;
+        video.play().catch(() => {});
+      }
+    }
+  };
+  img.src = data.screenData;
+});
+
+socket.on('stop-screen-fallback', (data) => {
+  if (data.fromPeerId === myId) return;
+  removeRemoteScreenVideo(data.fromPeerId);
+});
+
+// ============================================================
+// 20. MEDIA CONTROLS
 // ============================================================
 
 function makeFullscreen(elem) {
@@ -1235,42 +1502,6 @@ function replaceVideoTrackToPeers(newVideoTrack) {
   }
 }
 
-async function toggleScreenShare() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-    return showToast('⚠️ មុខងារ Share Screen អាចដំណើរការបានតែលើកុំព្យូទ័រប៉ុណ្ណោះ!', 'warning');
-  }
-  if (isScreenSharing) {
-    stopScreenShare();
-  } else {
-    try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-      isScreenSharing = true;
-      document.getElementById('screenBtn').innerHTML = '🛑 Stop Sharing';
-      document.getElementById('screenBtn').className = 'btn-danger';
-
-      addRemoteScreenVideo('my-local-screen', screenStream, myUsername + " (អ្នក)");
-      for (const peerId of Object.keys(peerCalls)) {
-        myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } });
-      }
-      screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
-    } catch (err) {
-      console.warn('Screen share canceled:', err);
-    }
-  }
-}
-
-function stopScreenShare() {
-  if (!isScreenSharing) return;
-  isScreenSharing = false;
-  document.getElementById('screenBtn').innerHTML = '🖥️ Share Screen';
-  document.getElementById('screenBtn').className = 'btn-warning';
-  removeRemoteScreenVideo('my-local-screen');
-  if (screenStream) {
-    screenStream.getTracks().forEach(track => track.stop());
-    screenStream = null;
-  }
-}
-
 function toggleMic() {
   const audioTrack = localStream.getAudioTracks()[0];
   if (!audioTrack) return showToast('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!', 'error');
@@ -1285,6 +1516,10 @@ function toggleMic() {
   }
 }
 
+// ============================================================
+// 21. LEAVE ROOM
+// ============================================================
+
 function leaveRoom() {
   if (isRemoteControlActive) {
     fetch('/api/remote-control/end', {
@@ -1298,6 +1533,10 @@ function leaveRoom() {
     stopRemoteControl();
     isRemoteControlActive = false;
     remoteControlTarget = null;
+  }
+  
+  if (isScreenShareFallback) {
+    stopScreenShareFallback();
   }
   
   if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
@@ -1328,6 +1567,8 @@ function leaveRoom() {
   socket.off('remote-mouse-move');
   socket.off('remote-mouse-click');
   socket.off('remote-keyboard');
+  socket.off('screen-data-fallback');
+  socket.off('stop-screen-fallback');
   
   socket.disconnect();
 
@@ -1349,7 +1590,7 @@ function leaveRoom() {
 }
 
 // ============================================================
-// 18. KEYBOARD SHORTCUTS
+// 22. KEYBOARD SHORTCUTS
 // ============================================================
 
 document.addEventListener('keydown', (e) => {
@@ -1363,7 +1604,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ============================================================
-// 19. INITIALIZATION
+// 23. INITIALIZATION
 // ============================================================
 
 window.onload = loadRooms;
