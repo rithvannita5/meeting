@@ -176,7 +176,7 @@ app.delete('/api/users/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (user && (user.role === 'admin' || user.role === 'supervisor')) {
-      return res.status(400).json({ message: 'មិនអាចលុប Admin ឬ Supervisor ได้ទេ!' });
+      return res.status(400).json({ message: 'មិនអាចលុប Admin ឬ Supervisor បានទេ!' });
     }
     await User.findByIdAndDelete(req.params.id); 
     res.json({ success: true, message: 'លុប User រួចរាល់!' });
@@ -199,7 +199,7 @@ app.put('/api/users/:id/toggle-block', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (user.role === 'admin' || user.role === 'supervisor') {
-      return res.status(400).json({ message: 'មិនអាច Block Admin ឬ Supervisor ได้ទេ!' });
+      return res.status(400).json({ message: 'មិនអាច Block Admin ឬ Supervisor បានទេ!' });
     }
     user.isBlocked = !user.isBlocked; await user.save(); 
     res.json({ success: true, message: 'ប្តូរស្ថានភាពរួចរាល់!' });
@@ -218,7 +218,7 @@ app.put('/api/users/:id/edit-role', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (user.role === 'admin') {
-      return res.status(400).json({ message: 'មិនអាចប្តូរ Role របស់ Admin ได้ទេ!' });
+      return res.status(400).json({ message: 'មិនអាចប្តូរ Role របស់ Admin បានទេ!' });
     }
     const { newRole } = req.body;
     if (!['admin', 'supervisor', 'user'].includes(newRole)) {
