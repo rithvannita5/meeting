@@ -32,14 +32,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ============== PWA Routes ==============
 
-// Serve manifest.json
 app.get('/manifest.json', (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.sendFile(path.join(__dirname, 'public', 'manifest.json'));
 });
 
-// Serve service worker
 app.get('/sw.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.setHeader('Service-Worker-Allowed', '/');
@@ -47,7 +45,6 @@ app.get('/sw.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'sw.js'));
 });
 
-// Serve icons - fallback to SVG if files don't exist
 app.use('/icons', express.static(path.join(__dirname, 'public', 'icons')));
 app.get('/icons/*', (req, res) => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
@@ -58,7 +55,6 @@ app.get('/icons/*', (req, res) => {
   res.send(svg);
 });
 
-// Favicon
 app.get('/favicon.ico', (req, res) => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
     <rect width="64" height="64" rx="14" fill="#00b4d8"/>
@@ -85,7 +81,6 @@ const roomSchema = new mongoose.Schema({
   roomId: { type: String, required: true, unique: true }
 });
 
-// Remote Control Schema
 const remoteControlSchema = new mongoose.Schema({
   controllerId: { type: String, required: true },
   targetId: { type: String, required: true },
@@ -461,7 +456,6 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
-// Handle socket.io errors
 io.engine.on("connection_error", (err) => {
   console.log('Socket.IO connection error:', err);
 });
