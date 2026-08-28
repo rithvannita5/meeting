@@ -6,22 +6,8 @@ const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const path = require('path');
 
-// ============================================================
-// PEERJS SERVER
-// ============================================================
-const { PeerServer } = require('peer');
-
 const app = express();
 const server = http.createServer(app);
-
-// បង្កើត PeerJS Server នៅលើ Port 9000
-const peerServer = PeerServer({
-  port: 9000,
-  path: '/peerjs',
-  allow_discovery: true
-});
-
-console.log('✅ PeerJS Server running on port 9000');
 
 // Socket.IO
 const io = socketIo(server, {
@@ -38,6 +24,17 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ============================================================
+// FALLBACK USERS (ប្រើពេល MongoDB មិនភ្ជាប់)
+// ============================================================
+const FALLBACK_USERS = {
+  'admin': { password: 'admin123', role: 'admin', assignedRoom: 'room-1' },
+  'supervisor': { password: 'user123', role: 'supervisor', assignedRoom: 'room-1' },
+  'rith': { password: 'user123', role: 'user', assignedRoom: 'room-1' },
+  'sokha': { password: 'user123', role: 'user', assignedRoom: 'room-1' },
+  'dara': { password: 'user123', role: 'user', assignedRoom: 'room-1' }
+};
 
 // ============================================================
 // MONGODB SCHEMA
@@ -61,26 +58,31 @@ const User = mongoose.model('User', userSchema);
 const Room = mongoose.model('Room', roomSchema);
 
 // ============================================================
-// CONNECT TO MONGODB
+// CONNECT TO MONGODB - FIXED: Use MONGO_URI
 // ============================================================
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://rithvannita5_db_user:81Aokzd93Q9Vu3Xb@cluster0.oaj62a4.mongodb.net/meetingDB?retryWrites=true&w=majority&appName=Cluster0";
+const MONGODB_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 
 console.log('🔌 Connecting to MongoDB...');
+console.log('📌 Using URI:', MONGODB_URI ? '✅ Connection string is set' : '❌ NOT SET!');
 
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 10000
-})
-.then(() => {
-  console.log('✅ Connected to MongoDB successfully!');
-  initializeData();
-})
-.catch(err => {
-  console.error('❌ MongoDB connection error:', err.message);
-  console.log('⚠️ Server will continue with limited functionality (using fallback data)');
-  initializeFallbackData();
-});
+if (!MONGODB_URI) {
+  console.log('⚠️ No MongoDB URI found! Using fallback users only.');
+  console.log('🔑 Default users: admin/admin123, supervisor/user123, rith/user123');
+} else {
+  mongoose.connect(MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 10000
+  })
+  .then(() => {
+    console.log('✅ Connected to MongoDB successfully!');
+    initializeData();
+  })
+  .catch(err => {
+    console.error('❌ MongoDB connection error:', err.message);
+    console.log('⚠️ Server will continue with fallback users only.');
+  });
+}
 
 // ============================================================
 // INITIALIZE DATA
@@ -97,34 +99,19 @@ async function initializeData() {
       }
     }
     
-    // Create default admin
-    const adminExists = await User.findOne({ username: 'admin' });
-    if (!adminExists) {
-      const salt = bcrypt.genSaltSync(10);
-      const hashedPassword = bcrypt.hashSync('admin123', salt);
-      await User.create({
-        username: 'admin',
-        password: hashedPassword,
-        role: 'admin',
-        assignedRoom: 'room-1'
-      });
-      console.log('✅ Default admin user created: admin/admin123');
-    }
-    
-    // Create default users
-    const defaultUsers = ['supervisor', 'rith', 'sokha', 'dara'];
-    for (const username of defaultUsers) {
+    // Create default users from fallback
+    for (const [username, data] of Object.entries(FALLBACK_USERS)) {
       const exists = await User.findOne({ username });
       if (!exists) {
         const salt = bcrypt.genSaltSync(10);
-        const hashedPassword = bcrypt.hashSync('user123', salt);
+        const hashedPassword = bcrypt.hashSync(data.password, salt);
         await User.create({
           username,
           password: hashedPassword,
-          role: username === 'supervisor' ? 'supervisor' : 'user',
-          assignedRoom: 'room-1'
+          role: data.role,
+          assignedRoom: data.assignedRoom
         });
-        console.log(`✅ Default user "${username}" created`);
+        console.log(`✅ User "${username}" created`);
       }
     }
     
@@ -132,12 +119,6 @@ async function initializeData() {
   } catch (err) {
     console.error('Error initializing data:', err);
   }
-}
-
-// Fallback data when MongoDB not available
-function initializeFallbackData() {
-  console.log('⚠️ Using fallback data (MongoDB not available)');
-  // In-memory fallback will be used in API routes
 }
 
 // ============================================================
@@ -151,7 +132,6 @@ app.get('/api/rooms', async (req, res) => {
       const rooms = await Room.find({}, 'roomId');
       res.json({ rooms: rooms.map(r => r.roomId) });
     } else {
-      // Fallback
       res.json({ rooms: ['room-1', 'room-2', 'room-3', 'room-4', 'room-5'] });
     }
   } catch (err) {
@@ -187,7 +167,6 @@ app.get('/api/users', async (req, res) => {
       const users = await User.find({}, '-password');
       res.json({ users });
     } else {
-      // Fallback users
       res.json({ users: [] });
     }
   } catch (err) {
@@ -196,7 +175,7 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// Login
+// Login - with fallback support
 app.post('/api/login', async (req, res) => {
   console.log('🔐 Login attempt:', req.body.username);
   
@@ -207,19 +186,11 @@ app.post('/api/login', async (req, res) => {
       return res.json({ success: false, message: 'សូមបំពេញ Username និង Password!' });
     }
     
-    // Check if MongoDB is connected
+    // ✅ Use fallback if MongoDB not connected
     if (mongoose.connection.readyState !== 1) {
       console.log('⚠️ MongoDB not connected, using fallback login');
-      // Fallback users
-      const fallbackUsers = {
-        'admin': { password: 'admin123', role: 'admin', assignedRoom: 'room-1' },
-        'supervisor': { password: 'user123', role: 'supervisor', assignedRoom: 'room-1' },
-        'rith': { password: 'user123', role: 'user', assignedRoom: 'room-1' },
-        'sokha': { password: 'user123', role: 'user', assignedRoom: 'room-1' },
-        'dara': { password: 'user123', role: 'user', assignedRoom: 'room-1' }
-      };
       
-      const user = fallbackUsers[username];
+      const user = FALLBACK_USERS[username];
       if (!user) {
         return res.json({ success: false, message: 'Username មិនត្រឹមត្រូវ!' });
       }
@@ -455,9 +426,9 @@ io.on('connection', (socket) => {
     socket.peerId = peerId;
     socket.username = username;
     
-    console.log(`📥 ${username} joined room: ${roomId} (${socket.id})`);
+    console.log(`📥 ${username} joined room: ${roomId}`);
     
-    // Update room in database
+    // Update room in database if MongoDB connected
     try {
       if (mongoose.connection.readyState === 1) {
         const room = await Room.findOne({ roomId });
@@ -474,7 +445,6 @@ io.on('connection', (socket) => {
       console.error('Error updating room:', err);
     }
     
-    // Get existing users in room
     const roomSockets = await io.in(roomId).fetchSockets();
     const users = roomSockets
       .filter(s => s.id !== socket.id && s.peerId)
@@ -483,8 +453,6 @@ io.on('connection', (socket) => {
     socket.emit('existing-users', users);
     socket.to(roomId).emit('user-joined', { peerId, username });
     socket.to(roomId).emit('play-sound', 'join');
-    
-    console.log(`👥 Room ${roomId} now has ${roomSockets.length} users`);
   });
   
   socket.on('private-message', (data) => {
@@ -556,5 +524,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🔗 http://localhost:${PORT}`);
-  console.log(`🌐 Render URL: https://your-app.onrender.com`);
+  console.log(`📝 Default users: admin/admin123, supervisor/user123, rith/user123`);
 });
