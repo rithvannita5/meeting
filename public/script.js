@@ -580,21 +580,12 @@ async function loadRooms() {
     if (select) select.innerHTML = '';
     if (adminSelect) adminSelect.innerHTML = '';
 
-    allRoomsList.forEach(r => {
+    data.rooms.forEach(r => {
       if (select) select.innerHTML += `<option value="${r}">${r}</option>`;
       if (adminSelect) adminSelect.innerHTML += `<option value="${r}">${r}</option>`;
     });
   } catch (err) {
     console.error('Error fetching rooms:', err);
-    // Use default rooms
-    const defaultRooms = ['room-1', 'room-2', 'room-3', 'room-4', 'room-5'];
-    const select = document.getElementById('roomSelect');
-    if (select) {
-      select.innerHTML = '';
-      defaultRooms.forEach(r => {
-        select.innerHTML += `<option value="${r}">${r}</option>`;
-      });
-    }
   }
 }
 
@@ -604,11 +595,6 @@ async function loadAdminRoomMonitor() {
     const data = await res.json();
     const container = document.getElementById('activeRoomsList');
     container.innerHTML = '';
-
-    if (!data.rooms || data.rooms.length === 0) {
-      container.innerHTML = '<p style="color:#94a3b8;">គ្មានបន្ទប់សកម្មទេ</p>';
-      return;
-    }
 
     data.rooms.forEach(room => {
       const isLive = room.userCount > 0;
@@ -626,10 +612,7 @@ async function loadAdminRoomMonitor() {
         </div>
       `;
     });
-  } catch (err) { 
-    console.error('Error loading rooms:', err); 
-    document.getElementById('activeRoomsList').innerHTML = '<p style="color:#ef4444;">មានបញ្ហាក្នុងការដាក់បង្ហាញបន្ទប់</p>';
-  }
+  } catch (err) { console.error('Error loading rooms:', err); }
 }
 
 async function loadUsersTable() {
@@ -638,11 +621,6 @@ async function loadUsersTable() {
     const data = await res.json();
     const tbody = document.getElementById('userTableBody');
     tbody.innerHTML = '';
-
-    if (!data.users || data.users.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#94a3b8;">គ្មាន User ទេ</td></tr>';
-      return;
-    }
 
     data.users.forEach(user => {
       const isBlocked = user.isBlocked;
@@ -655,9 +633,9 @@ async function loadUsersTable() {
       } else if (user.role === 'supervisor') {
         if (currentUserRole === 'admin') {
           adminActions = `
-            <button class="action-btn btn-secondary" onclick="editUserRole('${user._id}', 'user')">កែ Role</button>
-            <button class="action-btn btn-secondary" onclick="editUserRoom('${user._id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
-            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user._id}', '${user.username}')">Reset Pwd</button>
+            <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'user')">កែ Role</button>
+            <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
+            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
           `;
         } else {
           adminActions = '<span style="color:#64748b;">មិនអាចកែប្រែបាន</span>';
@@ -665,11 +643,11 @@ async function loadUsersTable() {
       } else {
         if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
           adminActions = `
-            <button class="action-btn btn-secondary" onclick="editUserRole('${user._id}', 'supervisor')">កែ Role</button>
-            <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user._id}')">${isBlocked ? 'Unblock' : 'Block'}</button>
-            <button class="action-btn btn-secondary" onclick="editUserRoom('${user._id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
-            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user._id}', '${user.username}')">Reset Pwd</button>
-            ${currentUserRole === 'admin' ? `<button class="action-btn btn-danger" onclick="deleteUser('${user._id}', '${user.username}')">លុប</button>` : ''}
+            <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'supervisor')">កែ Role</button>
+            <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user.id}')">${isBlocked ? 'Unblock' : 'Block'}</button>
+            <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
+            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
+            ${currentUserRole === 'admin' ? `<button class="action-btn btn-danger" onclick="deleteUser('${user.id}', '${user.username}')">លុប</button>` : ''}
           `;
         }
       }
@@ -686,10 +664,7 @@ async function loadUsersTable() {
         </tr>
       `;
     });
-  } catch (err) { 
-    console.error('Error loading user table:', err); 
-    document.getElementById('userTableBody').innerHTML = '<tr><td colspan="5" style="text-align:center; color:#ef4444;">មានបញ្ហាក្នុងការដាក់បង្ហាញ Users</td></tr>';
-  }
+  } catch (err) { console.error('Error loading user table:', err); }
 }
 
 function adminJoinRoom(roomId) {
@@ -708,9 +683,7 @@ async function toggleBlockUser(id) {
     const data = await res.json();
     showToast(data.message, 'success');
     await loadUsersTable();
-  } catch (err) {
-    showToast('មានបញ្ហាក្នុងការ Toggle Block!', 'error');
-  }
+  } catch (err) {}
 }
 
 async function deleteUser(id, username) {
@@ -720,9 +693,7 @@ async function deleteUser(id, username) {
     const data = await res.json();
     showToast(data.message, 'success');
     await loadUsersTable();
-  } catch (err) {
-    showToast('មានបញ្ហាក្នុងការលុប User!', 'error');
-  }
+  } catch (err) {}
 }
 
 async function resetPassword(id, username) {
@@ -736,9 +707,7 @@ async function resetPassword(id, username) {
     });
     const data = await res.json();
     showToast(data.message, 'success');
-  } catch (err) {
-    showToast('មានបញ្ហាក្នុងការប្តូរ Password!', 'error');
-  }
+  } catch (err) {}
 }
 
 async function editUserRoom(id, currentRoom) {
@@ -753,9 +722,7 @@ async function editUserRoom(id, currentRoom) {
     const data = await res.json();
     showToast(data.message, 'success');
     await loadUsersTable();
-  } catch (err) {
-    showToast('មានបញ្ហាក្នុងការប្តូរបន្ទប់!', 'error');
-  }
+  } catch (err) {}
 }
 
 async function editUserRole(id, newRole) {
@@ -801,9 +768,7 @@ async function createNewUser() {
       await loadUsersTable();
       await loadRooms();
     }
-  } catch (err) {
-    showToast('មានបញ្ហាក្នុងការបង្កើត User!', 'error');
-  }
+  } catch (err) {}
 }
 
 async function createNewRoom() {
@@ -822,9 +787,7 @@ async function createNewRoom() {
       await loadRooms();
       if (currentUserRole === 'admin') loadAdminRoomMonitor();
     }
-  } catch (err) {
-    showToast('មានបញ្ហាក្នុងការបង្កើតបន្ទប់!', 'error');
-  }
+  } catch (err) {}
 }
 
 // ============================================================
@@ -1030,7 +993,8 @@ async function startMeeting() {
   localStream = new MediaStream([audioTrack, createActiveDummyVideoTrack()]);
   localVideo.srcObject = localStream;
 
-  // ========== USE PUBLIC PEERJS SERVER ==========
+  // ========== PEERJS CONFIGURATION ==========
+  // ប្រើ 0.peerjs.com ជា signaling server
   myPeer = new Peer(undefined, {
     host: '0.peerjs.com',
     port: 443,
@@ -1043,6 +1007,7 @@ async function startMeeting() {
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun3.l.google.com:19302' },
         { urls: 'stun:stun4.l.google.com:19302' },
+        // TURN Server សម្រាប់ NAT traversal
         {
           urls: [
             'turn:openrelay.metered.ca:80',
@@ -1051,6 +1016,12 @@ async function startMeeting() {
           ],
           username: 'openrelayproject',
           credential: 'openrelayproject'
+        },
+        // TURN Server បម្រុង
+        {
+          urls: 'turn:turn.anyfirewall.com:443?transport=udp',
+          username: 'webrtc',
+          credential: 'webrtc'
         }
       ],
       iceTransportPolicy: 'all',
@@ -1087,48 +1058,44 @@ async function startMeeting() {
 
     console.log('📞 Incoming call type:', callType, 'from:', callerName);
 
-    // Handle Screen Share
+    // ========== SCREEN SHARE ==========
     if (callType === 'screen') {
       console.log('📺 Receiving screen share from:', callerName);
       
-      // ✅ Receive-only: answer without sending stream back
-      call.answer();
-
-      let receivedScreen = false;
-      const timer = setTimeout(() => {
-        if (!receivedScreen) {
-          console.warn('📺 Screen WebRTC is slow/blocked; sender fallback will handle it.');
-        }
-      }, 7000);
-
+      // ✅ បញ្ជូន stream ត្រឡប់ទៅវិញ
+      const answerStream = (isCameraOn && cameraStream) ? cameraStream : localStream;
+      call.answer(answerStream);
+      
       call.on('stream', (remoteScreenStream) => {
-        receivedScreen = true;
-        clearTimeout(timer);
         console.log('📺 Screen stream received from:', callerName);
         addRemoteScreenVideo(call.peer, remoteScreenStream, callerName);
         showToast(`🖥️ ${callerName} កំពុងចែករំលែក Screen!`, 'info');
       });
-
+      
       call.on('close', () => {
-        clearTimeout(timer);
+        console.log('📺 Screen share closed from:', callerName);
         removeRemoteScreenVideo(call.peer);
         delete screenCalls[call.peer];
       });
-
+      
       call.on('error', (err) => {
-        clearTimeout(timer);
         console.error('📺 Screen share error:', err);
         delete screenCalls[call.peer];
+        // Show fallback button
+        if (isScreenSharing) {
+          document.getElementById('screenBtnFallback').style.display = 'inline-block';
+        }
       });
-
+      
       screenCalls[call.peer] = call;
       return;
     }
 
-    // Handle Camera
+    // ========== CAMERA ==========
     call.answer(isCameraOn ? cameraStream : localStream);
     peerCalls[call.peer] = call;
     addRemoteVideo(call.peer, callerName);
+    
     call.on('stream', (remoteStream) => {
       const videoEl = document.getElementById(`video-${call.peer}`);
       if (videoEl) {
@@ -1136,10 +1103,12 @@ async function startMeeting() {
         updateConnectionStatus(call.peer, '🟢 Online');
       }
     });
+    
     call.on('close', () => {
       delete peerCalls[call.peer];
       updateConnectionStatus(call.peer, '🔴 Offline');
     });
+    
     call.on('error', (err) => {
       console.error('Camera call error:', err);
       delete peerCalls[call.peer];
@@ -1167,6 +1136,7 @@ async function startMeeting() {
       updateUserCount();
       updateChatUserList();
 
+      // ✅ Send screen to new user
       if (isScreenSharing && screenStream) {
         setTimeout(() => sendScreenToPeer(peerId), 1000);
       }
@@ -1184,6 +1154,7 @@ async function startMeeting() {
   });
 }
 
+// ========== SEND SCREEN TO PEER ==========
 function sendScreenToPeer(peerId) {
   if (!isScreenSharing || !screenStream || !myPeer || !peerId) return;
 
@@ -1198,133 +1169,27 @@ function sendScreenToPeer(peerId) {
     });
     screenCalls[peerId] = call;
 
-    const timer = setTimeout(() => {
-      if (screenCalls[peerId] === call && isScreenSharing) {
-        console.warn('📺 Screen WebRTC timeout:', peerId);
-        startAutomaticScreenFallback();
-      }
-    }, 7000);
-    screenCallTimers[peerId] = timer;
-
-    const pc = call.peerConnection;
-    if (pc) {
-      pc.addEventListener('iceconnectionstatechange', () => {
-        const state = pc.iceConnectionState;
-        console.log('📺 Screen ICE', peerId, state);
-        if (state === 'failed' || state === 'disconnected') {
-          startAutomaticScreenFallback();
-        } else if (state === 'connected' || state === 'completed') {
-          clearTimeout(timer);
-          delete screenCallTimers[peerId];
-        }
-      });
-    }
-
-    call.on('stream', () => {
-      clearTimeout(timer);
-      delete screenCallTimers[peerId];
-      console.log('📺 Screen WebRTC active:', peerId);
-    });
-
     call.on('close', () => {
-      clearTimeout(timer);
-      delete screenCallTimers[peerId];
       delete screenCalls[peerId];
     });
 
     call.on('error', (err) => {
-      clearTimeout(timer);
-      delete screenCallTimers[peerId];
-      delete screenCalls[peerId];
       console.error('📺 Screen WebRTC error:', peerId, err);
-      if (isScreenSharing) startAutomaticScreenFallback();
+      delete screenCalls[peerId];
     });
+
+    console.log('📺 Sending screen to peer:', peerId);
   } catch (err) {
     console.error('📺 Screen call failed:', peerId, err);
-    startAutomaticScreenFallback();
   }
 }
 
-function startAutomaticScreenFallback() {
-  if (!isScreenSharing || isScreenShareFallback || !screenStream) return;
-  screenFallbackAuto = true;
-  startSocketScreenFallbackFromExistingStream();
-}
-
-async function startSocketScreenFallbackFromExistingStream() {
-  if (!isScreenSharing || !screenStream || isScreenShareFallback) return;
-
-  isScreenShareFallback = true;
-  document.getElementById('screenBtnFallback').innerHTML = '🛑 Auto Fallback';
-  document.getElementById('screenBtnFallback').className = 'btn-danger';
-  document.getElementById('screenBtn').style.display = 'none';
-
-  if (!screenFallbackCanvas) screenFallbackCanvas = document.createElement('canvas');
-
-  const track = screenStream.getVideoTracks()[0];
-  try {
-    screenFallbackImageCapture = ('ImageCapture' in window)
-      ? new ImageCapture(track)
-      : null;
-  } catch (e) {
-    screenFallbackImageCapture = null;
-  }
-
-  screenFallbackVideo = document.createElement('video');
-  screenFallbackVideo.muted = true;
-  screenFallbackVideo.playsInline = true;
-  screenFallbackVideo.autoplay = true;
-  screenFallbackVideo.srcObject = screenStream;
-  try { await screenFallbackVideo.play(); } catch (e) {}
-
-  clearInterval(screenCaptureInterval);
-  screenCaptureInterval = setInterval(async () => {
-    if (!isScreenShareFallback || !screenStream) return;
-
-    const now = Date.now();
-    if (now - screenFallbackLastSent < 250) return;
-    screenFallbackLastSent = now;
-
-    try {
-      let bitmap = null;
-      if (screenFallbackImageCapture) {
-        bitmap = await screenFallbackImageCapture.grabFrame();
-      }
-
-      const canvas = screenFallbackCanvas;
-      if (bitmap) {
-        const scale = Math.min(1, 960 / bitmap.width, 540 / bitmap.height);
-        canvas.width = Math.max(320, Math.floor(bitmap.width * scale));
-        canvas.height = Math.max(180, Math.floor(bitmap.height * scale));
-        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-        if (bitmap.close) bitmap.close();
-      } else if (screenFallbackVideo && screenFallbackVideo.readyState >= 2) {
-        const w = screenFallbackVideo.videoWidth || 1280;
-        const h = screenFallbackVideo.videoHeight || 720;
-        const scale = Math.min(1, 960 / w, 540 / h);
-        canvas.width = Math.max(320, Math.floor(w * scale));
-        canvas.height = Math.max(180, Math.floor(h * scale));
-        canvas.getContext('2d').drawImage(screenFallbackVideo, 0, 0, canvas.width, canvas.height);
-      } else {
-        return;
-      }
-
-      socket.emit('screen-data-fallback', {
-        roomId: currentRoomId,
-        fromPeerId: myId,
-        screenData: canvas.toDataURL('image/jpeg', 0.55)
-      });
-    } catch (err) {
-      console.error('📡 Fallback capture error:', err);
-    }
-  }, 250);
-}
-
+// ========== CONNECT TO USER ==========
 function connectToUser(peerId) {
   if (peerCalls[peerId]) return;
   
   try {
-    // Send camera stream first
+    // Send camera stream
     const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
     const call = myPeer.call(peerId, streamToSend, { metadata: { type: 'camera', username: myUsername } });
     peerCalls[peerId] = call;
@@ -1346,7 +1211,7 @@ function connectToUser(peerId) {
       updateConnectionStatus(peerId, '🔴 Offline');
     });
 
-    // Then send screen if active
+    // Send screen if active
     if (isScreenSharing && screenStream) {
       setTimeout(() => sendScreenToPeer(peerId), 500);
     }
@@ -1463,8 +1328,10 @@ async function toggleScreenShare() {
     document.getElementById('screenBtn').className = 'btn-danger';
     document.getElementById('screenBtnFallback').style.display = 'none';
     
+    // Display locally
     addRemoteScreenVideo('my-local-screen', screenStream, myUsername + ' (អ្នក)');
     
+    // Send to all peers
     const peerIds = Object.keys(peerCalls);
     if (peerIds.length === 0) {
       showToast('⏳ កំពុងរង់ចាំអ្នកប្រើផ្សេងទៀត...', 'info');
@@ -1474,6 +1341,7 @@ async function toggleScreenShare() {
       sendScreenToPeer(peerId);
     }
     
+    // Stop sharing when user clicks stop
     screenStream.getVideoTracks()[0].onended = () => {
       stopScreenShare();
     };
@@ -1497,17 +1365,12 @@ function stopScreenShare() {
   
   removeRemoteScreenVideo('my-local-screen');
   
+  // Close all screen calls
   for (const [peerId, call] of Object.entries(screenCalls)) {
     try { call.close(); } catch (e) {}
-    if (screenCallTimers[peerId]) clearTimeout(screenCallTimers[peerId]);
-    delete screenCallTimers[peerId];
     delete screenCalls[peerId];
   }
-
-  if (isScreenShareFallback) {
-    stopScreenShareFallback();
-  }
-
+  
   if (screenStream) {
     screenStream.getTracks().forEach(track => track.stop());
     screenStream = null;
@@ -1550,6 +1413,75 @@ async function toggleScreenShareFallback() {
     console.error('Fallback screen share error:', err);
     showToast('❌ មិនអាច Share Screen បានទេ!', 'error');
   }
+}
+
+function startSocketScreenFallbackFromExistingStream() {
+  if (!isScreenSharing || !screenStream || isScreenShareFallback) return;
+
+  isScreenShareFallback = true;
+  document.getElementById('screenBtnFallback').innerHTML = '🛑 Auto Fallback';
+  document.getElementById('screenBtnFallback').className = 'btn-danger';
+  document.getElementById('screenBtn').style.display = 'none';
+
+  if (!screenFallbackCanvas) screenFallbackCanvas = document.createElement('canvas');
+
+  const track = screenStream.getVideoTracks()[0];
+  try {
+    screenFallbackImageCapture = ('ImageCapture' in window)
+      ? new ImageCapture(track)
+      : null;
+  } catch (e) {
+    screenFallbackImageCapture = null;
+  }
+
+  screenFallbackVideo = document.createElement('video');
+  screenFallbackVideo.muted = true;
+  screenFallbackVideo.playsInline = true;
+  screenFallbackVideo.autoplay = true;
+  screenFallbackVideo.srcObject = screenStream;
+  try { screenFallbackVideo.play(); } catch (e) {}
+
+  clearInterval(screenCaptureInterval);
+  screenCaptureInterval = setInterval(async () => {
+    if (!isScreenShareFallback || !screenStream) return;
+
+    const now = Date.now();
+    if (now - screenFallbackLastSent < 250) return;
+    screenFallbackLastSent = now;
+
+    try {
+      let bitmap = null;
+      if (screenFallbackImageCapture) {
+        bitmap = await screenFallbackImageCapture.grabFrame();
+      }
+
+      const canvas = screenFallbackCanvas;
+      if (bitmap) {
+        const scale = Math.min(1, 960 / bitmap.width, 540 / bitmap.height);
+        canvas.width = Math.max(320, Math.floor(bitmap.width * scale));
+        canvas.height = Math.max(180, Math.floor(bitmap.height * scale));
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        if (bitmap.close) bitmap.close();
+      } else if (screenFallbackVideo && screenFallbackVideo.readyState >= 2) {
+        const w = screenFallbackVideo.videoWidth || 1280;
+        const h = screenFallbackVideo.videoHeight || 720;
+        const scale = Math.min(1, 960 / w, 540 / h);
+        canvas.width = Math.max(320, Math.floor(w * scale));
+        canvas.height = Math.max(180, Math.floor(h * scale));
+        canvas.getContext('2d').drawImage(screenFallbackVideo, 0, 0, canvas.width, canvas.height);
+      } else {
+        return;
+      }
+
+      socket.emit('screen-data-fallback', {
+        roomId: currentRoomId,
+        fromPeerId: myId,
+        screenData: canvas.toDataURL('image/jpeg', 0.55)
+      });
+    } catch (err) {
+      console.error('📡 Fallback capture error:', err);
+    }
+  }, 250);
 }
 
 function stopScreenShareFallback() {
