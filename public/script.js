@@ -1,13 +1,9 @@
 // ============================================================
-// SOCKET.IO CONNECTION - Polling with upgrade
+// SOCKET.IO CONNECTION - Polling Only (No WebSocket)
 // ============================================================
-let socket = null;
-let socketConnected = false;
-let connectionAttempts = 0;
-
 function connectSocket() {
   socket = io({
-    transports: ['polling', 'websocket'],
+    transports: ['polling'], // ONLY POLLING
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,
@@ -16,8 +12,8 @@ function connectSocket() {
     autoConnect: true,
     forceNew: true,
     path: '/socket.io',
-    upgrade: true,
-    rememberUpgrade: true,
+    upgrade: false, // DON'T upgrade to WebSocket
+    rememberUpgrade: false,
     extraHeaders: {
       'X-Forwarded-Proto': 'https'
     }
@@ -30,32 +26,16 @@ function connectSocket() {
     console.log('❌ Socket.IO connection error:', error);
     connectionAttempts++;
     
-    if (error.message === 'websocket error' || error.message === 'xhr poll error') {
-      console.log('🔄 Trying with polling only...');
-      if (connectionAttempts > 3) {
-        socket.io.opts.transports = ['polling'];
-        socket.connect();
-      }
-    }
-    
     if (connectionAttempts > 5) {
       showToast('⚠️ កំពុងព្យាយាមភ្ជាប់ Server...', 'warning');
     }
   });
 
   socket.on('connect', () => {
-    console.log('✅ Socket.IO connected successfully!');
+    console.log('✅ Socket.IO connected successfully using Polling!');
     socketConnected = true;
     connectionAttempts = 0;
     showToast('✅ ភ្ជាប់ Server បានជោគជ័យ!', 'success');
-    
-    if (socket.io.opts.transports[0] === 'polling') {
-      console.log('🔄 Attempting to upgrade to WebSocket...');
-      setTimeout(() => {
-        socket.io.opts.transports = ['polling', 'websocket'];
-        socket.io.engine.open();
-      }, 2000);
-    }
   });
 
   socket.on('disconnect', (reason) => {
@@ -79,6 +59,9 @@ function connectSocket() {
     console.log('❌ Reconnect failed');
     showToast('❌ មិនអាចភ្ជាប់ Server បានទេ!', 'error');
   });
+
+  // ... rest of socket event handlers (rooms-update, play-sound, etc.) remain the same ...
+}
 
   // ============================================================
   // ROOMS UPDATE
