@@ -135,20 +135,38 @@
       <div id="tab-users" class="tab-pane hidden">
         <table>
           <thead>
-            <tr><th>Username</th><th>Role</th><th>បន្ទប់កំណត់</th><th>ស្ថានភាព</th><th>សកម្មភាព</th></tr>
-          </thead>
+  <tr>
+    <th>Username</th>
+    <th>Role</th>
+    <th>បន្ទប់កំណត់</th>
+    <th>ស្ថានភាព</th>
+    <th>សកម្មភាព</th>
+  </tr>
+</thead>
           <tbody id="userTableBody"></tbody>
         </table>
       </div>
       <div id="tab-newRoom" class="tab-pane hidden">
         <div style="display:flex; gap:30px; flex-wrap:wrap;">
           <div style="flex:1; min-width:280px;">
-            <h3>➕ បង្កើត User ថ្មី</h3>
-            <div class="form-group" style="margin-top:10px;"><input type="text" id="newUsername" placeholder="Username"></div>
-            <div class="form-group"><input type="password" id="newPassword" placeholder="Password"></div>
-            <div class="form-group"><select id="userAssignedRoomSelect"></select></div>
-            <button class="btn-success" onclick="createNewUser()">បង្កើត User</button>
-          </div>
+  <h3>➕ បង្កើត User ថ្មី</h3>
+  <div class="form-group" style="margin-top:10px;">
+    <input type="text" id="newUsername" placeholder="Username">
+  </div>
+  <div class="form-group">
+    <input type="password" id="newPassword" placeholder="Password">
+  </div>
+  <div class="form-group">
+    <select id="userAssignedRoomSelect"></select>
+  </div>
+  <div class="form-group">
+    <select id="newUserRoleSelect">
+      <option value="user">User</option>
+      <option value="supervisor">Supervisor</option>
+    </select>
+  </div>
+  <button class="btn-success" onclick="createNewUser()">បង្កើត User</button>
+</div>
           <div style="flex:1; min-width:280px;">
             <h3>➕ បង្កើតបន្ទប់ថ្មី</h3>
             <div class="form-group" style="margin-top:10px;"><input type="text" id="newRoomId" placeholder="ឧ. room-3"></div>
