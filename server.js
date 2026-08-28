@@ -8,7 +8,6 @@ const mongoose = require('mongoose');
 const app = express();
 const server = http.createServer(app);
 
-// PeerServer
 const peerServer = ExpressPeerServer(server, {
   debug: true,
   path: '/'
@@ -16,10 +15,7 @@ const peerServer = ExpressPeerServer(server, {
 app.use('/peerjs', peerServer);
 
 const io = new Server(server, { 
-  cors: { 
-    origin: "*",
-    methods: ["GET", "POST"]
-  },
+  cors: { origin: "*", methods: ["GET", "POST"] },
   transports: ['websocket', 'polling'],
   allowUpgrades: true,
   pingTimeout: 60000,
@@ -30,41 +26,15 @@ const io = new Server(server, {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ============== PWA Routes ==============
-
 app.get('/manifest.json', (req, res) => {
   res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Cache-Control', 'public, max-age=3600');
   res.sendFile(path.join(__dirname, 'public', 'manifest.json'));
 });
 
 app.get('/sw.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
-  res.setHeader('Service-Worker-Allowed', '/');
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'sw.js'));
 });
-
-app.use('/icons', express.static(path.join(__dirname, 'public', 'icons')));
-app.get('/icons/*', (req, res) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-    <rect width="512" height="512" rx="100" fill="#00b4d8"/>
-    <text x="256" y="340" font-family="Arial" font-size="280" font-weight="bold" fill="white" text-anchor="middle">VC</text>
-  </svg>`;
-  res.setHeader('Content-Type', 'image/svg+xml');
-  res.send(svg);
-});
-
-app.get('/favicon.ico', (req, res) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-    <rect width="64" height="64" rx="14" fill="#00b4d8"/>
-    <text x="32" y="44" font-family="Arial" font-size="36" font-weight="bold" fill="white" text-anchor="middle">VC</text>
-  </svg>`;
-  res.setHeader('Content-Type', 'image/svg+xml');
-  res.send(svg);
-});
-
-// ============== MongoDB Connection ==============
 
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://rithvannita5_db_user:81Aokzd93Q9Vu3Xb@cluster0.oaj62a4.mongodb.net/meetingDB?retryWrites=true&w=majority&appName=Cluster0";
 
@@ -94,22 +64,17 @@ const RemoteControl = mongoose.model('RemoteControl', remoteControlSchema);
 mongoose.connect(MONGO_URI)
   .then(async () => {
     console.log('✅ Connected to MongoDB Atlas!');
-    const adminExists = await User.findOne({ username: 'admin' });
-    if (!adminExists) {
+    if (!await User.findOne({ username: 'admin' })) {
       await User.create({ username: 'admin', password: '123', role: 'admin', assignedRoom: 'all', isBlocked: false });
     }
-    const defaultRoom1 = await Room.findOne({ roomId: 'room-1' });
-    if (!defaultRoom1) await Room.create({ roomId: 'room-1' });
-    const defaultRoom2 = await Room.findOne({ roomId: 'room-2' });
-    if (!defaultRoom2) await Room.create({ roomId: 'room-2' });
+    if (!await Room.findOne({ roomId: 'room-1' })) await Room.create({ roomId: 'room-1' });
+    if (!await Room.findOne({ roomId: 'room-2' })) await Room.create({ roomId: 'room-2' });
   })
   .catch(err => console.error('MongoDB Error:', err));
 
 const roomUsers = {};
 const activeSockets = new Map();
 const otpStore = {};
-
-// ============== API Routes ==============
 
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
@@ -132,7 +97,7 @@ app.post('/api/login', async (req, res) => {
       otpStore[username] = otp;
       onlineSockets.forEach(sId => io.to(sId).emit('receive-otp', { otp, ip: req.ip }));
       io.emit('admin-alert', { username: username, count: onlineSockets.length + 1 });
-      return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។ សូមបញ្ចូលលេខកូដ 2FA!' });
+      return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។' });
     }
 
     res.json({ success: true, user: { id: user._id, username: user.username, role: user.role, assignedRoom: user.assignedRoom } });
@@ -169,10 +134,7 @@ app.get('/api/users', async (req, res) => {
 
 app.post('/api/create-user', async (req, res) => {
   const { username, password, assignedRoom, role } = req.body;
-  if (!username || !password || !assignedRoom) return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់!' });
   try {
-    const exists = await User.findOne({ username });
-    if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
     await User.create({ username, password, assignedRoom, role: role || 'user' });
     res.json({ success: true, message: 'បង្កើត User ជោគជ័យ!' });
   } catch (err) { res.status(500).json({ message: 'Error creating user' }); }
@@ -180,10 +142,6 @@ app.post('/api/create-user', async (req, res) => {
 
 app.delete('/api/users/:id', async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
-    if (user && (user.role === 'admin' || user.role === 'supervisor')) {
-      return res.status(400).json({ message: 'មិនអាចលុប Admin ឬ Supervisor បានទេ!' });
-    }
     await User.findByIdAndDelete(req.params.id); 
     res.json({ success: true, message: 'លុប User រួចរាល់!' });
   } catch (err) { res.status(500).json({ message: 'Error deleting user' }); }
@@ -191,8 +149,6 @@ app.delete('/api/users/:id', async (req, res) => {
 
 app.put('/api/users/:id/reset-password', async (req, res) => {
   try { 
-    const user = await User.findById(req.params.id);
-    if (user && user.role === 'admin') return res.status(400).json({ message: 'មិនអាចប្តូរលេខសម្ងាត់ Admin បានទេ!' });
     await User.findByIdAndUpdate(req.params.id, { password: req.body.newPassword }); 
     res.json({ success: true, message: 'ប្តូរ Password ជោគជ័យ!' }); 
   } catch (err) { res.status(500).json({ message: 'Error updating password' }); }
@@ -201,7 +157,6 @@ app.put('/api/users/:id/reset-password', async (req, res) => {
 app.put('/api/users/:id/toggle-block', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    if (user.role === 'admin' || user.role === 'supervisor') return res.status(400).json({ message: 'មិនអាច Block Admin ឬ Supervisor បានទេ!' });
     user.isBlocked = !user.isBlocked; await user.save(); 
     res.json({ success: true, message: 'ប្តូរស្ថានភាពរួចរាល់!' });
   } catch (err) { res.status(500).json({ message: 'Error updating status' }); }
@@ -216,23 +171,14 @@ app.put('/api/users/:id/edit-room', async (req, res) => {
 
 app.put('/api/users/:id/edit-role', async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
-    if (user.role === 'admin') return res.status(400).json({ message: 'មិនអាចប្តូរ Role របស់ Admin បានទេ!' });
-    const { newRole } = req.body;
-    if (!['admin', 'supervisor', 'user'].includes(newRole)) return res.status(400).json({ message: 'Role មិនត្រឹមត្រូវទេ!' });
-    user.role = newRole;
-    await user.save();
+    await User.findByIdAndUpdate(req.params.id, { role: req.body.newRole });
     res.json({ success: true, message: 'ប្តូរ Role ជោគជ័យ!' });
   } catch (err) { res.status(500).json({ message: 'Error updating role' }); }
 });
 
 app.post('/api/create-room', async (req, res) => {
-  const { roomId } = req.body;
-  if (!roomId) return res.status(400).json({ message: 'សូមបញ្ចូលឈ្មោះបន្ទប់!' });
   try {
-    const exists = await Room.findOne({ roomId });
-    if (exists) return res.status(400).json({ message: 'បន្ទប់នេះមានរួចហើយ!' });
-    await Room.create({ roomId }); 
+    await Room.create({ roomId: req.body.roomId }); 
     res.json({ success: true, message: 'បង្កើតបន្ទប់ជោគជ័យ!' });
   } catch (err) { res.status(500).json({ message: 'Error creating room' }); }
 });
@@ -254,14 +200,60 @@ app.get('/api/rooms', async (req, res) => {
   catch (err) { res.status(500).json({ message: 'Error fetching rooms' }); }
 });
 
-// ============== Socket.IO Real-time Events ==============
+// Remote Control APIs
+app.post('/api/remote-control/request', async (req, res) => {
+  const { controllerId, targetId, roomId } = req.body;
+  try {
+    const request = await RemoteControl.create({ controllerId, targetId, roomId, status: 'pending' });
+    for (let [sId, data] of activeSockets.entries()) {
+      if (roomUsers[roomId]) {
+        const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
+        if (targetUser) {
+          io.to(targetUser.socketId).emit('remote-control-request', { requestId: request._id, controllerId });
+          break;
+        }
+      }
+    }
+    res.json({ success: true, requestId: request._id });
+  } catch (e) { res.status(500).json({ success: false }); }
+});
+
+app.post('/api/remote-control/approve', async (req, res) => {
+  const { requestId, targetId } = req.body;
+  try {
+    const reqDoc = await RemoteControl.findById(requestId);
+    if (reqDoc) {
+      reqDoc.status = 'approved';
+      await reqDoc.save();
+      io.emit('remote-control-approved', { controllerId: reqDoc.controllerId, targetId });
+    }
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false }); }
+});
+
+app.post('/api/remote-control/reject', async (req, res) => {
+  const { requestId } = req.body;
+  try {
+    const reqDoc = await RemoteControl.findById(requestId);
+    if (reqDoc) {
+      reqDoc.status = 'rejected';
+      await reqDoc.save();
+      io.emit('remote-control-rejected', { controllerId: reqDoc.controllerId });
+    }
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false }); }
+});
+
+app.post('/api/remote-control/end', async (req, res) => {
+  const { controllerId, targetId } = req.body;
+  io.emit('remote-control-ended', { controllerId, targetId });
+  res.json({ success: true });
+});
 
 io.on('connection', (socket) => {
   activeSockets.set(socket.id, { username: 'Guest' });
 
-  socket.on('register-admin', () => {
-    socket.join('admin-room');
-  });
+  socket.on('register-admin', () => socket.join('admin-room'));
 
   socket.on('join-room', (roomId, peerId, username) => {
     socket.join(roomId);
@@ -271,10 +263,7 @@ io.on('connection', (socket) => {
     roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
     io.to(roomId).emit('play-sound', 'join');
-
-    const existingUsers = roomUsers[roomId].filter(u => u.peerId !== peerId);
-    socket.emit('existing-users', existingUsers);
-
+    socket.emit('existing-users', roomUsers[roomId].filter(u => u.peerId !== peerId));
     socket.to(roomId).emit('user-joined', { peerId, username });
     io.emit('rooms-update');
   });
@@ -296,14 +285,11 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Screen Share Fallback Relay via Socket.IO
-  socket.on('screen-data-fallback', (data) => {
-    socket.to(data.roomId).emit('screen-data-fallback', data);
-  });
-
-  socket.on('stop-screen-fallback', (data) => {
-    socket.to(data.roomId).emit('stop-screen-fallback', data);
-  });
+  socket.on('remote-mouse-move', (data) => io.emit('remote-mouse-move', data));
+  socket.on('remote-mouse-click', (data) => io.emit('remote-mouse-click', data));
+  socket.on('remote-keyboard', (data) => io.emit('remote-keyboard', data));
+  socket.on('screen-data-fallback', (data) => socket.to(data.roomId).emit('screen-data-fallback', data));
+  socket.on('stop-screen-fallback', (data) => socket.to(data.roomId).emit('stop-screen-fallback', data));
 
   socket.on('disconnect', () => {
     activeSockets.delete(socket.id);
@@ -322,6 +308,4 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
