@@ -996,38 +996,31 @@ async function startMeeting() {
   // ========== PEERJS CONFIGURATION ==========
   // ប្រើ 0.peerjs.com ជា signaling server
   myPeer = new Peer(undefined, {
-    host: '0.peerjs.com',
-    port: 443,
-    path: '/',
-    secure: true,
-    config: {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
-        // TURN Server សម្រាប់ NAT traversal
-        {
-          urls: [
-            'turn:openrelay.metered.ca:80',
-            'turn:openrelay.metered.ca:443',
-            'turn:openrelay.metered.ca:443?transport=tcp'
-          ],
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        // TURN Server បម្រុង
-        {
-          urls: 'turn:turn.anyfirewall.com:443?transport=udp',
-          username: 'webrtc',
-          credential: 'webrtc'
-        }
-      ],
-      iceTransportPolicy: 'all',
-      iceCandidatePoolSize: 10
-    }
-  });
+  host: '0.peerjs.com',
+  port: 443,
+  path: '/',
+  secure: true,
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' },
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp'
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
+    ],
+    iceTransportPolicy: 'all',
+    iceCandidatePoolSize: 10
+  }
+});
 
   // Debug - Log connection status
   myPeer.on('connection', (conn) => {
