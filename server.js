@@ -15,42 +15,47 @@ const peerServer = ExpressPeerServer(server, {
 });
 app.use('/peerjs', peerServer);
 
-// ========== FIX: Socket.IO Configuration ==========
+// ========== FIX: Socket.IO with better configuration ==========
 const io = new Server(server, { 
   cors: { 
     origin: "*",
     methods: ["GET", "POST"],
     credentials: true
   },
-  transports: ['websocket', 'polling'],
+  transports: ['polling', 'websocket'], // polling first, then upgrade to websocket
   allowUpgrades: true,
   pingTimeout: 60000,
   pingInterval: 25000,
   cookie: false,
-  upgradeTimeout: 10000,
-  allowEIO3: true
+  upgradeTimeout: 30000,
+  allowEIO3: true,
+  // បង្ខំឲ្យ reconnect
+  connectTimeout: 45000,
+  // បង្កើន maxHttpBufferSize
+  maxHttpBufferSize: 1e8
 });
 
-// ========== FIX: WebSocket Upgrade Handler ==========
+// ========== FIX: Handle upgrade properly ==========
 server.on('upgrade', (request, socket, head) => {
-  console.log('WebSocket upgrade request received');
+  console.log('🔌 WebSocket upgrade request received');
   io.engine.handleUpgrade(request, socket, head, (ws) => {
     io.engine.attach(ws, request);
   });
 });
 
+// ========== FIX: Log connection errors ==========
 io.engine.on("connection_error", (err) => {
-  console.log('Socket.IO connection error:', err);
+  console.log('❌ Socket.IO connection error:', err);
 });
 
 io.engine.on("connection", (socket) => {
-  console.log('Socket.IO engine connection established');
+  console.log('✅ Socket.IO engine connection established');
 });
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ========== PING Endpoint ==========
+// ========== PING Endpoint for keep-alive ==========
 app.get('/ping', (req, res) => {
   res.send('pong');
 });
@@ -132,7 +137,7 @@ const roomUsers = {};
 const activeSockets = new Map();
 const otpStore = {};
 
-// ========== API Routes ==========
+// ========== API Routes (keep existing) ==========
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
   try {
@@ -355,14 +360,15 @@ app.post('/api/remote-control/end', async (req, res) => {
 
 // ========== Socket.io ==========
 io.on('connection', (socket) => {
-  console.log('New socket connected:', socket.id);
+  console.log('🔌 New socket connected:', socket.id);
   
   socket.on('register-admin', () => {
     socket.join('admin-room');
-    console.log('Admin registered:', socket.id);
+    console.log('👑 Admin registered:', socket.id);
   });
 
   socket.on('join-room', (roomId, peerId, username) => {
+    console.log(`📡 ${username} joining room: ${roomId}`);
     socket.join(roomId);
     socket.data.roomId = roomId;
     socket.data.peerId = peerId;
@@ -382,7 +388,7 @@ io.on('connection', (socket) => {
     io.to('admin-room').emit('rooms-update');
 
     socket.on('disconnect', () => {
-      console.log('Socket disconnected:', socket.id);
+      console.log('🔌 Socket disconnected:', socket.id);
       activeSockets.delete(socket.id);
       if (roomUsers[roomId]) {
         roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
@@ -444,9 +450,9 @@ setInterval(() => {
   const https = require('https');
   const hostname = process.env.RENDER_EXTERNAL_HOSTNAME || 'meeting-mu6x.onrender.com';
   https.get(`https://${hostname}/ping`, (res) => {
-    console.log('Keep-alive ping sent');
+    console.log('💓 Keep-alive ping sent');
   }).on('error', (err) => {
-    console.log('Keep-alive ping failed:', err.message);
+    console.log('❌ Keep-alive ping failed:', err.message);
   });
 }, 60000);
 
@@ -455,5 +461,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
 io.engine.on("connection_error", (err) => {
-  console.log('Socket.IO connection error:', err);
+  console.log('❌ Socket.IO connection error:', err);
 });
