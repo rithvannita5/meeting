@@ -63,7 +63,7 @@ const Room = mongoose.model('Room', roomSchema);
 // ============================================================
 // CONNECT TO MONGODB
 // ============================================================
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/videoconf';
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://rithvannita5_db_user:81Aokzd93Q9Vu3Xb@cluster0.oaj62a4.mongodb.net/meetingDB?retryWrites=true&w=majority&appName=Cluster0";
 
 console.log('🔌 Connecting to MongoDB...');
 
