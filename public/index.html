@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="km">
 <head>
-
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
   
@@ -16,13 +15,9 @@
   <!-- PWA Manifest -->
   <link rel="manifest" href="/manifest.json">
   
-  <!-- Favicon - inline SVG -->
+  <!-- Favicon -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2300b4d8'/%3E%3Ctext x='32' y='44' font-family='Arial' font-size='36' font-weight='bold' fill='white' text-anchor='middle'%3EVC%3C/text%3E%3C/svg%3E" type="image/svg+xml">
   
-  <title>ប្រព័ន្ធ Video Conference សុវត្ថិភាព</title>
-  
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
   <title>ប្រព័ន្ធ Video Conference សុវត្ថិភាព</title>
   
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -53,6 +48,7 @@
     .btn-danger { background: #ef4444; color: #fff; }
     .btn-secondary { background: #475569; color: #fff; }
     .btn-purple { background: #8b5cf6; color: #fff; }
+    .btn-purple:hover { background: #7c3aed; }
 
     #otp-modal { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; display:flex; justify-content:center; align-items:center; padding: 15px; }
 
@@ -102,52 +98,173 @@
     .room-card { background: #0b132b; border: 1px solid #334155; padding: 20px; border-radius: 8px; width: 100%; max-width: 300px; }
     .room-card.live { border-color: #10b981; }
 
-    /* Remote Control Button */
-    .remote-btn {
-      position: absolute;
-      bottom: 70px;
-      right: 10px;
-      z-index: 50;
-      background: #f59e0b;
-      color: #000;
-      border: none;
-      border-radius: 8px;
-      padding: 5px 10px;
-      font-size: 12px;
-      cursor: pointer;
-      font-weight: bold;
+    /* Remote Control Modal */
+    #remoteControlModal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.95);
+      z-index: 99999;
+      display: none;
+      flex-direction: column;
     }
-    .remote-btn:hover { background: #d97706; }
-    .remote-btn.active { background: #10b981; }
+    #remoteControlModal.active {
+      display: flex;
+    }
+    .remote-modal-header {
+      background: #1c2541;
+      padding: 15px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .remote-video-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px;
+      position: relative;
+      overflow: hidden;
+    }
+    .remote-video-container video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+    .remote-status-bar {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.8);
+      padding: 10px 25px;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 14px;
+    }
 
-    /* Remote Pointer Animation */
+    /* Remote Request Popup */
+    #remoteRequestPopup {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #1c2541;
+      border: 2px solid #f59e0b;
+      border-radius: 15px;
+      padding: 30px;
+      z-index: 99998;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+      display: none;
+    }
+    #remoteRequestPopup.active {
+      display: block;
+    }
+
+    /* Remote Control Overlay */
+    #remoteControlOverlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 99997;
+      pointer-events: none;
+      display: none;
+    }
+    #remoteControlOverlay.active {
+      display: block;
+    }
+    .remote-overlay-text {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,0,0,0.85);
+      color: white;
+      padding: 8px 20px;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 14px;
+      pointer-events: none;
+    }
+
+    /* Remote Pointer */
+    .remote-pointer {
+      position: fixed;
+      width: 30px;
+      height: 30px;
+      border: 3px solid #ff0000;
+      border-radius: 50%;
+      background: rgba(255, 0, 0, 0.2);
+      pointer-events: none;
+      z-index: 99999;
+      transform: translate(-50%, -50%);
+      transition: left 0.05s, top 0.05s;
+      display: none;
+    }
+    .remote-pointer.active {
+      display: block;
+    }
+    .remote-pointer::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 6px;
+      height: 6px;
+      background: #ff0000;
+      border-radius: 50%;
+    }
+
+    /* Remote Click Effect */
+    .remote-click-effect {
+      position: fixed;
+      width: 40px;
+      height: 40px;
+      border: 4px solid #00ff00;
+      border-radius: 50%;
+      background: rgba(0, 255, 0, 0.2);
+      pointer-events: none;
+      z-index: 99999;
+      transform: translate(-50%, -50%);
+      animation: clickPulse 0.6s ease-out forwards;
+    }
+
     @keyframes clickPulse {
       0% { transform: translate(-50%, -50%) scale(0.5); opacity: 1; }
       100% { transform: translate(-50%, -50%) scale(2); opacity: 0; }
     }
-    .remote-pointer {
-      position: fixed;
-      width: 20px;
-      height: 20px;
-      border: 2px solid red;
-      border-radius: 50%;
-      background: rgba(255, 0, 0, 0.3);
-      pointer-events: none;
-      z-index: 9999;
-      transform: translate(-50%, -50%);
-      transition: left 0.05s, top 0.05s;
+
+    @keyframes slideUp {
+      from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+      to { transform: translateX(-50%) translateY(0); opacity: 1; }
     }
-    .click-effect {
+
+    /* Toast */
+    .toast {
       position: fixed;
-      width: 30px;
-      height: 30px;
-      border: 3px solid #00ff00;
-      border-radius: 50%;
-      background: rgba(0, 255, 0, 0.2);
-      pointer-events: none;
-      z-index: 9999;
-      transform: translate(-50%, -50%);
-      animation: clickPulse 0.5s ease-out forwards;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 25px;
+      border-radius: 10px;
+      color: white;
+      font-weight: bold;
+      z-index: 999999;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+      animation: slideUp 0.3s ease;
+      max-width: 90%;
+      text-align: center;
+      font-size: 14px;
     }
 
     /* Responsive */
@@ -202,13 +319,15 @@
       <h2>🛠️ ផ្ទាំងបញ្ជាគ្រប់គ្រង</h2>
       <div>
         <span style="margin-right:15px; color:#48cae4;">👤 Role: <strong id="adminRoleDisplay">admin</strong></span>
+        <button id="adminInstallBtn" class="btn-success" style="display:none; padding:8px 15px; font-size:13px; margin-right:10px;" onclick="installApp()">
+          📲 Install App
+        </button>
         <button class="btn-danger" onclick="logoutAdmin()">🚪 ចាកចេញ (Logout)</button>
       </div>
     </div>
     <div class="nav-tabs">
       <button id="tabBtnRooms" class="tab-btn active" onclick="switchAdminTab('rooms')">📡 តាមដានបន្ទប់សកម្ម</button>
       <button id="tabBtnUsers" class="tab-btn" onclick="switchAdminTab('users')">👥 គ្រប់គ្រង Users</button>
-      <!-- Supervisor មិនអាចមើល Tab បង្កើតបានទេ -->
       <button id="tabBtnNewRoom" class="tab-btn" onclick="switchAdminTab('newRoom')" style="display:none;">➕ បង្កើតបន្ទប់ / User</button>
     </div>
     <div class="tab-content">
@@ -267,6 +386,7 @@
     <div class="header-bar">
       <h3 id="welcome-text">👋 សួស្តី...</h3>
       <div class="top-actions">
+        <button class="btn-purple" onclick="showRemoteUserSelector()">🖥️ Remote Control</button>
         <button class="btn-primary" onclick="toggleChat()">💬 ផ្ញើសារ Private</button>
         <button id="screenBtn" class="btn-warning" onclick="toggleScreenShare()">🖥️ Share Screen</button>
         <button class="btn-secondary" onclick="changeMyPassword()">🔑 ប្តូរ Password</button>
@@ -309,6 +429,61 @@
     </div>
   </div>
 
+  <!-- Remote Control Modal -->
+  <div id="remoteControlModal">
+    <div class="remote-modal-header">
+      <div>
+        <span style="color:#48cae4; font-weight:bold;">🖥️ Remote Control</span>
+        <span id="remoteControlUser" style="color:#94a3b8; margin-left:15px;">កំពុងភ្ជាប់...</span>
+      </div>
+      <div>
+        <button class="btn-danger" style="padding:8px 20px; font-size:14px;" onclick="endRemoteControl()">
+          ⛔ បញ្ចប់ Remote
+        </button>
+        <button class="btn-secondary" style="padding:8px 20px; font-size:14px; margin-left:10px;" onclick="closeRemoteModal()">
+          ✖ បិទ
+        </button>
+      </div>
+    </div>
+    <div class="remote-video-container">
+      <video id="remoteScreenVideo" autoplay playsinline></video>
+      <div class="remote-status-bar">
+        <span id="remoteStatusText">⏳ កំពុងរង់ចាំ...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Remote Request Popup -->
+  <div id="remoteRequestPopup">
+    <div style="text-align:center;">
+      <div style="font-size:60px; margin-bottom:15px;">🖥️</div>
+      <h3 style="color:#f59e0b; margin-bottom:10px;">សំណើរ Remote Control</h3>
+      <p style="color:#94a3b8; margin-bottom:20px; line-height:1.6;">
+        <span id="remoteRequesterName">មិត្តភក្តិ</span> ចង់គ្រប់គ្រង Screen របស់អ្នកពីចម្ងាយ។<br>
+        តើអ្នកអនុញ្ញាតទេ?
+      </p>
+      <div style="display:flex; gap:15px; justify-content:center;">
+        <button class="btn-success" style="padding:12px 30px;" onclick="approveRemoteControl()">
+          ✅ អនុញ្ញាត
+        </button>
+        <button class="btn-danger" style="padding:12px 30px;" onclick="rejectRemoteControl()">
+          ❌ បដិសេធ
+        </button>
+      </div>
+      <div id="remoteRequestLoading" style="display:none; margin-top:15px;">
+        <span style="color:#48cae4;">⏳ កំពុងដំណើរការ...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Remote Control Overlay -->
+  <div id="remoteControlOverlay">
+    <div class="remote-overlay-text">🔴 កំពុងត្រូវបានគ្រប់គ្រងពីចម្ងាយ</div>
+  </div>
+
+  <!-- Remote Pointer -->
+  <div id="remotePointer" class="remote-pointer"></div>
+
   <script>
     // ============================================================
     // 1. SOCKET & PEER INITIALIZATION
@@ -331,6 +506,7 @@
     let dummyAnimFrame = null;
     let allRoomsList = [];
     let pendingLoginData = null;
+    let deferredPrompt = null;
 
     const localVideo = document.getElementById('localVideo');
     const screenGrid = document.getElementById('screenGrid');
@@ -343,13 +519,13 @@
     let remoteControlTarget = null;
     let remoteControlRequestId = null;
     let isBeingControlled = false;
-    let remotePointer = null;
+    let remoteScreenStream = null;
+    let remoteControlData = null;
 
     // ============================================================
     // 3. SOCKET EVENT LISTENERS
     // ============================================================
     
-    // Rooms Update for Admin/Supervisor
     socket.on('rooms-update', () => {
       if ((currentUserRole === 'admin' || currentUserRole === 'supervisor') && 
           !document.getElementById('admin-dashboard').classList.contains('hidden')) {
@@ -357,14 +533,12 @@
       }
     });
 
-    // Sound Notifications
     socket.on('play-sound', (type) => {
       playNotificationSound(type);
     });
 
-    // 2FA OTP
     socket.on('receive-otp', (data) => {
-      alert(`🚨 ព្រមាន៖ មានគេកំពុងព្យាយាម Login ចូលគណនីរបស់អ្នកពីឧបករណ៍ផ្សេង!\n\n🔐 នេះជាលេខកូដ 2FA របស់អ្នក៖ 【 ${data.otp} 】\n\n(សូមកុំប្រាប់លេខកូដនេះទៅអ្នកណាឱ្យសោះ!)`);
+      alert(`🚨 ព្រមាន៖ មានគេកំពុងព្យាយាម Login ចូលគណនីរបស់អ្នកពីឧបករណ៍ផ្សេង!\n\n🔐 នេះជាលេខកូដ 2FA របស់អ្នក៖ 【 ${data.otp} 】`);
     });
 
     socket.on('admin-alert', (data) => {
@@ -380,58 +554,48 @@
     socket.on('remote-control-request', (data) => {
       if (data.targetId === myId) {
         const username = userNamesMap[data.controllerId] || 'មិត្តភក្តិ';
-        if (confirm(`${username} ចង់គ្រប់គ្រង Screen របស់អ្នកពីចម្ងាយ។ តើអ្នកអនុញ្ញាតទេ?`)) {
-          fetch('/api/remote-control/approve', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              requestId: data.requestId,
-              targetId: myId
-            })
-          });
-          isBeingControlled = true;
-          alert('អ្នកបានអនុញ្ញាត Remote Control! អ្នកគ្រប់គ្រងអាចបញ្ជា Screen របស់អ្នកបាន។');
-        } else {
-          fetch('/api/remote-control/reject', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ requestId: data.requestId })
-          });
-        }
+        remoteControlRequestId = data.requestId;
+        remoteControlData = data;
+        
+        document.getElementById('remoteRequesterName').textContent = username;
+        document.getElementById('remoteRequestPopup').classList.add('active');
+        document.getElementById('remoteRequestLoading').style.display = 'none';
+        document.getElementById('remoteApproveBtn').style.display = 'inline-block';
+        document.getElementById('remoteRejectBtn').style.display = 'inline-block';
       }
     });
 
     socket.on('remote-control-approved', (data) => {
       if (data.controllerId === myId) {
-        alert('✅ Remote Control ត្រូវបានអនុញ្ញាត! អ្នកអាចគ្រប់គ្រង Screen ពីចម្ងាយបានហើយ។');
+        showToast('✅ Remote Control ត្រូវបានអនុញ្ញាត!', 'success');
         isRemoteControlActive = true;
         remoteControlTarget = data.targetId;
-        startRemoteControl();
+        openRemoteModal();
       }
     });
 
     socket.on('remote-control-rejected', (data) => {
       if (data.controllerId === myId) {
-        alert('❌ Remote Control ត្រូវបានបដិសេធ!');
+        showToast('❌ Remote Control ត្រូវបានបដិសេធ!', 'error');
         isRemoteControlActive = false;
         remoteControlTarget = null;
+        document.getElementById('remoteStatusText').textContent = '❌ ត្រូវបានបដិសេធ';
       }
     });
 
     socket.on('remote-control-ended', (data) => {
       if (data.controllerId === myId) {
-        alert('Remote Control បានបញ្ចប់!');
+        showToast('Remote Control បានបញ្ចប់!', 'info');
         isRemoteControlActive = false;
         remoteControlTarget = null;
-        stopRemoteControl();
+        closeRemoteModal();
       }
       if (data.targetId === myId) {
         isBeingControlled = false;
-        alert('Remote Control បានបញ្ចប់!');
-        if (remotePointer) {
-          remotePointer.remove();
-          remotePointer = null;
-        }
+        document.getElementById('remoteControlOverlay').classList.remove('active');
+        document.getElementById('remoteControlOverlay').style.display = 'none';
+        stopScreenShareForRemote();
+        showToast('Remote Control បានបញ្ចប់!', 'info');
       }
     });
 
@@ -442,25 +606,55 @@
 
     socket.on('remote-mouse-click', (data) => {
       if (!isBeingControlled) return;
-      const element = document.elementFromPoint(data.x, data.y);
+      
+      const screenX = (data.x / 1920) * window.innerWidth;
+      const screenY = (data.y / 1080) * window.innerHeight;
+      
+      const element = document.elementFromPoint(screenX, screenY);
       if (element) {
-        element.click();
-        showRemoteClick(data.x, data.y);
+        const clickEvent = new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          clientX: screenX,
+          clientY: screenY
+        });
+        element.dispatchEvent(clickEvent);
+        showRemoteClick(screenX, screenY);
       }
     });
 
     socket.on('remote-keyboard', (data) => {
       if (!isBeingControlled) return;
+      
       const activeElement = document.activeElement;
-      if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'SELECT')) {
-        const event = new KeyboardEvent('keydown', { key: data.key, bubbles: true });
+      if (activeElement && (activeElement.tagName === 'INPUT' || 
+                            activeElement.tagName === 'TEXTAREA' || 
+                            activeElement.isContentEditable)) {
+        const event = new KeyboardEvent('keydown', {
+          key: data.key,
+          code: data.code,
+          ctrlKey: data.ctrlKey,
+          shiftKey: data.shiftKey,
+          altKey: data.altKey,
+          metaKey: data.metaKey,
+          bubbles: true
+        });
         activeElement.dispatchEvent(event);
-        // For text input, simulate typing
-        if (data.key.length === 1) {
+        
+        if (data.key.length === 1 && !data.ctrlKey && !data.metaKey) {
           const inputEvent = new InputEvent('input', { bubbles: true });
           activeElement.dispatchEvent(inputEvent);
         }
       }
+    });
+
+    socket.on('remote-scroll', (data) => {
+      if (!isBeingControlled) return;
+      window.scrollBy({
+        top: data.deltaY * 2,
+        left: data.deltaX * 2,
+        behavior: 'smooth'
+      });
     });
 
     // ============================================================
@@ -511,7 +705,7 @@
     });
 
     // ============================================================
-    // 7. SOUND NOTIFICATION FUNCTION
+    // 7. SOUND NOTIFICATION
     // ============================================================
     
     function playNotificationSound(type) {
@@ -547,8 +741,16 @@
     
     function requestRemoteControl(targetId) {
       if (currentUserRole !== 'admin' && currentUserRole !== 'supervisor') {
-        return alert('អ្នកគ្មានសិទ្ធិប្រើមុខងារ Remote Control ទេ!');
+        return showToast('អ្នកគ្មានសិទ្ធិប្រើ Remote Control!', 'error');
       }
+      
+      const targetName = userNamesMap[targetId] || 'មិត្តភក្តិ';
+      
+      if (!confirm(`តើអ្នកចង់គ្រប់គ្រង Screen របស់ ${targetName} មែនទេ?`)) {
+        return;
+      }
+      
+      showToast('⏳ កំពុងផ្ញើសំណើរ Remote Control...', 'info');
       
       fetch('/api/remote-control/request', {
         method: 'POST',
@@ -562,83 +764,355 @@
       .then(res => res.json())
       .then(data => {
         if (data.success) {
-          alert('កំពុងផ្ញើសំណើរ Remote Control... សូមរង់ចាំការអនុញ្ញាតពីម្ចាស់ Screen!');
           remoteControlRequestId = data.requestId;
+          remoteControlTarget = targetId;
+          showToast('📨 សំណើរត្រូវបានផ្ញើ! សូមរង់ចាំការអនុញ្ញាត...', 'info');
+          document.getElementById('remoteStatusText').textContent = '⏳ កំពុងរង់ចាំការអនុញ្ញាត...';
         } else {
-          alert('មិនអាចផ្ញើសំណើរបានទេ: ' + data.message);
+          showToast('❌ ' + data.message, 'error');
+        }
+      })
+      .catch(err => {
+        showToast('❌ មានបញ្ហាក្នុងការផ្ញើសំណើរ!', 'error');
+      });
+    }
+
+    function approveRemoteControl() {
+      document.getElementById('remoteApproveBtn').style.display = 'none';
+      document.getElementById('remoteRejectBtn').style.display = 'none';
+      document.getElementById('remoteRequestLoading').style.display = 'block';
+      
+      fetch('/api/remote-control/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId: remoteControlRequestId,
+          targetId: myId
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('remoteRequestPopup').classList.remove('active');
+        if (data.success) {
+          isBeingControlled = true;
+          showToast('✅ អ្នកបានអនុញ្ញាត Remote Control!', 'success');
+          document.getElementById('remoteControlOverlay').classList.add('active');
+          document.getElementById('remoteControlOverlay').style.display = 'block';
+          startScreenShareForRemote();
+        } else {
+          showToast('❌ មានបញ្ហាក្នុងការអនុញ្ញាត!', 'error');
         }
       });
     }
 
-    function startRemoteControl() {
-      if (!isRemoteControlActive) return;
+    function rejectRemoteControl() {
+      document.getElementById('remoteApproveBtn').style.display = 'none';
+      document.getElementById('remoteRejectBtn').style.display = 'none';
+      document.getElementById('remoteRequestLoading').style.display = 'block';
       
-      document.addEventListener('mousemove', handleRemoteMouseMove);
-      document.addEventListener('click', handleRemoteMouseClick);
-      document.addEventListener('keydown', handleRemoteKeyboard);
-      
-      alert('🎯 Remote Control បានចាប់ផ្ដើម! អ្នកអាចប្រើ Mouse និង Keyboard ដើម្បីបញ្ជា Screen ចម្ងាយ។');
+      fetch('/api/remote-control/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: remoteControlRequestId })
+      })
+      .then(() => {
+        document.getElementById('remoteRequestPopup').classList.remove('active');
+        showToast('❌ អ្នកបានបដិសេធ Remote Control!', 'error');
+      });
     }
 
-    function stopRemoteControl() {
+    async function startScreenShareForRemote() {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { 
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 }
+          },
+          audio: false
+        });
+        
+        remoteScreenStream = stream;
+        
+        if (myPeer && remoteControlData) {
+          const call = myPeer.call(remoteControlData.controllerId, stream, {
+            metadata: { type: 'remote-screen', username: myUsername }
+          });
+          
+          call.on('close', () => {
+            stopScreenShareForRemote();
+          });
+        }
+        
+        stream.getVideoTracks()[0].onended = () => {
+          stopScreenShareForRemote();
+        };
+        
+      } catch (err) {
+        console.error('Screen share error:', err);
+        showToast('❌ មិនអាចចែករំលែក Screen បានទេ!', 'error');
+        isBeingControlled = false;
+        document.getElementById('remoteControlOverlay').classList.remove('active');
+        document.getElementById('remoteControlOverlay').style.display = 'none';
+      }
+    }
+
+    function stopScreenShareForRemote() {
+      if (remoteScreenStream) {
+        remoteScreenStream.getTracks().forEach(track => track.stop());
+        remoteScreenStream = null;
+      }
+      isBeingControlled = false;
+      document.getElementById('remoteControlOverlay').classList.remove('active');
+      document.getElementById('remoteControlOverlay').style.display = 'none';
+    }
+
+    function openRemoteModal() {
+      const modal = document.getElementById('remoteControlModal');
+      modal.classList.add('active');
+      modal.style.display = 'flex';
+      
+      const targetName = userNamesMap[remoteControlTarget] || 'អ្នកប្រើ';
+      document.getElementById('remoteControlUser').textContent = `កំពុងគ្រប់គ្រង: ${targetName}`;
+      document.getElementById('remoteStatusText').textContent = '🟢 កំពុងភ្ជាប់...';
+      
+      startRemoteControlEvents();
+    }
+
+    function closeRemoteModal() {
+      const modal = document.getElementById('remoteControlModal');
+      modal.classList.remove('active');
+      modal.style.display = 'none';
+      
+      if (isRemoteControlActive) {
+        endRemoteControl();
+      }
+    }
+
+    function endRemoteControl() {
+      if (!isRemoteControlActive) return;
+      
+      fetch('/api/remote-control/end', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          controllerId: myId,
+          targetId: remoteControlTarget
+        })
+      });
+      
+      isRemoteControlActive = false;
+      remoteControlTarget = null;
+      stopRemoteControlEvents();
+      closeRemoteModal();
+      showToast('Remote Control បានបញ្ចប់!', 'info');
+    }
+
+    function startRemoteControlEvents() {
+      document.addEventListener('mousemove', handleRemoteMouseMove);
+      document.addEventListener('mousedown', handleRemoteMouseDown);
+      document.addEventListener('mouseup', handleRemoteMouseUp);
+      document.addEventListener('keydown', handleRemoteKeyboard);
+      document.addEventListener('wheel', handleRemoteWheel);
+      
+      document.getElementById('remoteStatusText').textContent = '🟢 កំពុងគ្រប់គ្រង...';
+    }
+
+    function stopRemoteControlEvents() {
       document.removeEventListener('mousemove', handleRemoteMouseMove);
-      document.removeEventListener('click', handleRemoteMouseClick);
+      document.removeEventListener('mousedown', handleRemoteMouseDown);
+      document.removeEventListener('mouseup', handleRemoteMouseUp);
       document.removeEventListener('keydown', handleRemoteKeyboard);
+      document.removeEventListener('wheel', handleRemoteWheel);
     }
 
     function handleRemoteMouseMove(event) {
       if (!isRemoteControlActive || !remoteControlTarget) return;
       
+      const video = document.getElementById('remoteScreenVideo');
+      const rect = video.getBoundingClientRect();
+      
+      const x = ((event.clientX - rect.left) / rect.width) * 1920;
+      const y = ((event.clientY - rect.top) / rect.height) * 1080;
+      
       socket.emit('remote-mouse-move', {
         targetId: remoteControlTarget,
-        x: event.clientX,
-        y: event.clientY
+        x: Math.max(0, Math.min(1920, x)),
+        y: Math.max(0, Math.min(1080, y))
       });
     }
 
-    function handleRemoteMouseClick(event) {
+    function handleRemoteMouseDown(event) {
       if (!isRemoteControlActive || !remoteControlTarget) return;
+      
+      const video = document.getElementById('remoteScreenVideo');
+      const rect = video.getBoundingClientRect();
+      
+      const x = ((event.clientX - rect.left) / rect.width) * 1920;
+      const y = ((event.clientY - rect.top) / rect.height) * 1080;
       
       socket.emit('remote-mouse-click', {
         targetId: remoteControlTarget,
-        x: event.clientX,
-        y: event.clientY
+        x: Math.max(0, Math.min(1920, x)),
+        y: Math.max(0, Math.min(1080, y)),
+        button: event.button
       });
+    }
+
+    function handleRemoteMouseUp(event) {
+      if (!isRemoteControlActive || !remoteControlTarget) return;
+      // Optional: handle mouse up
     }
 
     function handleRemoteKeyboard(event) {
       if (!isRemoteControlActive || !remoteControlTarget) return;
+      if (event.key === 'Escape' || event.key === 'F12') return;
       
       socket.emit('remote-keyboard', {
         targetId: remoteControlTarget,
-        key: event.key
+        key: event.key,
+        code: event.code,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        metaKey: event.metaKey
       });
+      
+      event.preventDefault();
+    }
+
+    function handleRemoteWheel(event) {
+      if (!isRemoteControlActive || !remoteControlTarget) return;
+      
+      socket.emit('remote-scroll', {
+        targetId: remoteControlTarget,
+        deltaY: event.deltaY,
+        deltaX: event.deltaX
+      });
+      
+      event.preventDefault();
     }
 
     function showRemotePointer(x, y) {
-      if (!remotePointer) {
-        remotePointer = document.createElement('div');
-        remotePointer.className = 'remote-pointer';
-        document.body.appendChild(remotePointer);
-      }
-      remotePointer.style.left = x + 'px';
-      remotePointer.style.top = y + 'px';
+      const pointer = document.getElementById('remotePointer');
+      const screenX = (x / 1920) * window.innerWidth;
+      const screenY = (y / 1080) * window.innerHeight;
+      
+      pointer.style.left = screenX + 'px';
+      pointer.style.top = screenY + 'px';
+      pointer.classList.add('active');
     }
 
     function showRemoteClick(x, y) {
       const clickEffect = document.createElement('div');
-      clickEffect.className = 'click-effect';
+      clickEffect.className = 'remote-click-effect';
       clickEffect.style.left = x + 'px';
       clickEffect.style.top = y + 'px';
       document.body.appendChild(clickEffect);
       
       setTimeout(() => {
         if (clickEffect.parentNode) clickEffect.remove();
-      }, 500);
+      }, 600);
+    }
+
+    function showRemoteUserSelector() {
+      if (currentUserRole !== 'admin' && currentUserRole !== 'supervisor') {
+        return showToast('អ្នកគ្មានសិទ្ធិប្រើ Remote Control!', 'error');
+      }
+      
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.8);
+        z-index: 99998;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      `;
+      
+      const modal = document.createElement('div');
+      modal.style.cssText = `
+        background: #1c2541;
+        border-radius: 15px;
+        padding: 30px;
+        max-width: 400px;
+        width: 90%;
+        max-height: 80vh;
+        overflow-y: auto;
+      `;
+      
+      let usersHtml = '<h3 style="color:#48cae4; margin-bottom:20px;">🖥️ ជ្រើសរើសអ្នកប្រើសម្រាប់ Remote</h3>';
+      
+      const users = Object.entries(userNamesMap).filter(([id, name]) => id !== myId);
+      
+      if (users.length === 0) {
+        usersHtml += '<p style="color:#94a3b8;">គ្មានអ្នកប្រើផ្សេងទៀតក្នុងបន្ទប់ទេ!</p>';
+      } else {
+        users.forEach(([id, name]) => {
+          usersHtml += `
+            <button onclick="selectRemoteTarget('${id}')" style="
+              display:block; width:100%; padding:12px 15px;
+              margin:8px 0; background:#0b132b; border:1px solid #334155;
+              border-radius:8px; color:white; cursor:pointer;
+              text-align:left; font-size:14px;
+              transition: all 0.2s;
+            " onmouseover="this.style.borderColor='#48cae4'" onmouseout="this.style.borderColor='#334155'">
+              👤 ${name}
+            </button>
+          `;
+        });
+      }
+      
+      usersHtml += `
+        <button onclick="this.closest('div[style*=\"z-index: 99998\"]').remove()" style="
+          display:block; width:100%; padding:10px; margin-top:15px;
+          background:#ef4444; border:none; border-radius:8px;
+          color:white; cursor:pointer; font-weight:bold;
+        ">បិទ</button>
+      `;
+      
+      modal.innerHTML = usersHtml;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      
+      overlay.onclick = (e) => {
+        if (e.target === overlay) overlay.remove();
+      };
+    }
+
+    function selectRemoteTarget(targetId) {
+      document.querySelector('div[style*="z-index: 99998"]')?.remove();
+      requestRemoteControl(targetId);
     }
 
     // ============================================================
-    // 9. ADMIN FUNCTIONS
+    // 9. TOAST NOTIFICATION
+    // ============================================================
+    
+    function showToast(message, type = 'info') {
+      const colors = {
+        success: '#10b981',
+        error: '#ef4444',
+        info: '#48cae4',
+        warning: '#f59e0b'
+      };
+      
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.style.background = colors[type] || '#48cae4';
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.3s';
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    }
+
+    // ============================================================
+    // 10. ADMIN FUNCTIONS
     // ============================================================
     
     function switchAdminTab(tab) {
@@ -724,7 +1198,7 @@
           } else if (user.role === 'supervisor') {
             if (currentUserRole === 'admin') {
               adminActions = `
-                <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'user')">កែ Role → User</button>
+                <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'user')">កែ Role</button>
                 <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
                 <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
               `;
@@ -732,10 +1206,9 @@
               adminActions = '<span style="color:#64748b;">មិនអាចកែប្រែបាន</span>';
             }
           } else {
-            // User role
             if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
               adminActions = `
-                <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'supervisor')">កែ Role → Supervisor</button>
+                <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'supervisor')">កែ Role</button>
                 <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user.id}')">${isBlocked ? 'Unblock' : 'Block'}</button>
                 <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
                 <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
@@ -766,14 +1239,14 @@
     }
 
     // ============================================================
-    // 10. ADMIN CRUD OPERATIONS
+    // 11. ADMIN CRUD OPERATIONS
     // ============================================================
     
     async function toggleBlockUser(id) {
       try {
         const res = await fetch(`/api/users/${id}/toggle-block`, { method: 'PUT' });
         const data = await res.json();
-        alert(data.message);
+        showToast(data.message, 'success');
         await loadUsersTable();
       } catch (err) {}
     }
@@ -783,7 +1256,7 @@
       try {
         const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
         const data = await res.json();
-        alert(data.message);
+        showToast(data.message, 'success');
         await loadUsersTable();
       } catch (err) {}
     }
@@ -798,12 +1271,12 @@
           body: JSON.stringify({ newPassword })
         });
         const data = await res.json();
-        alert(data.message);
+        showToast(data.message, 'success');
       } catch (err) {}
     }
 
     async function editUserRoom(id, currentRoom) {
-      const newRoom = prompt(`បញ្ចូលបន្ទប់ថ្មី (បន្ទប់បច្ចុប្បន្ន: ${currentRoom}):\nជម្រើសបន្ទប់ដែលមាន: ${allRoomsList.join(', ')}`);
+      const newRoom = prompt(`បញ្ចូលបន្ទប់ថ្មី (បន្ទប់បច្ចុប្បន្ន: ${currentRoom}):\nជម្រើស: ${allRoomsList.join(', ')}`);
       if (!newRoom) return;
       try {
         const res = await fetch(`/api/users/${id}/edit-room`, {
@@ -812,18 +1285,17 @@
           body: JSON.stringify({ newRoom })
         });
         const data = await res.json();
-        alert(data.message);
+        showToast(data.message, 'success');
         await loadUsersTable();
       } catch (err) {}
     }
 
     async function editUserRole(id, newRole) {
       if (currentUserRole !== 'admin') {
-        return alert('អ្នកគ្មានសិទ្ធិកែប្រែ Role ទេ!');
+        return showToast('អ្នកគ្មានសិទ្ធិកែប្រែ Role ទេ!', 'error');
       }
       
-      const confirmMsg = `តើអ្នកប្រាកដថាចង់ប្តូរ Role ទៅជា "${newRole}" ទេ?`;
-      if (!confirm(confirmMsg)) return;
+      if (!confirm(`តើអ្នកប្រាកដថាចង់ប្តូរ Role ទៅជា "${newRole}" ទេ?`)) return;
       
       try {
         const res = await fetch(`/api/users/${id}/edit-role`, {
@@ -832,10 +1304,10 @@
           body: JSON.stringify({ newRole })
         });
         const data = await res.json();
-        alert(data.message);
+        showToast(data.message, 'success');
         if (data.success) await loadUsersTable();
       } catch (err) {
-        alert('មានបញ្ហាក្នុងការប្តូរ Role!');
+        showToast('មានបញ្ហាក្នុងការប្តូរ Role!', 'error');
       }
     }
 
@@ -845,7 +1317,7 @@
       const assignedRoom = document.getElementById('userAssignedRoomSelect').value;
       const role = document.getElementById('newUserRoleSelect').value;
       
-      if (!username || !password) return alert('សូមបំពេញព័ត៌មាន!');
+      if (!username || !password) return showToast('សូមបំពេញព័ត៌មាន!', 'error');
       
       try {
         const res = await fetch('/api/create-user', {
@@ -854,7 +1326,7 @@
           body: JSON.stringify({ username, password, assignedRoom, role })
         });
         const data = await res.json();
-        alert(data.message);
+        showToast(data.message, data.success ? 'success' : 'error');
         if (data.success) {
           document.getElementById('newUsername').value = '';
           document.getElementById('newPassword').value = '';
@@ -866,7 +1338,7 @@
 
     async function createNewRoom() {
       const roomId = document.getElementById('newRoomId').value.trim();
-      if (!roomId) return alert('សូមបញ្ចូលឈ្មោះបន្ទប់!');
+      if (!roomId) return showToast('សូមបញ្ចូលឈ្មោះបន្ទប់!', 'error');
       try {
         const res = await fetch('/api/create-room', {
           method: 'POST',
@@ -874,7 +1346,7 @@
           body: JSON.stringify({ roomId })
         });
         const data = await res.json();
-        alert(data.message);
+        showToast(data.message, data.success ? 'success' : 'error');
         if (data.success) {
           document.getElementById('newRoomId').value = '';
           await loadRooms();
@@ -884,7 +1356,7 @@
     }
 
     // ============================================================
-    // 11. AUTHENTICATION
+    // 12. AUTHENTICATION
     // ============================================================
     
     async function login() {
@@ -892,7 +1364,7 @@
       const password = document.getElementById('password').value.trim();
       const roomId = document.getElementById('roomSelect').value;
 
-      if (!username || !password) return alert('សូមបំពេញ Username និង Password!');
+      if (!username || !password) return showToast('សូមបំពេញ Username និង Password!', 'error');
       pendingLoginData = { username, password, roomId };
 
       try {
@@ -904,21 +1376,21 @@
         const data = await res.json();
 
         if (data.requires2FA) {
-          alert(data.message);
+          showToast(data.message, 'warning');
           document.getElementById('otp-modal').classList.remove('hidden');
           return;
         }
 
-        if (!data.success) return alert(data.message);
+        if (!data.success) return showToast(data.message, 'error');
         finalizeLogin(data);
       } catch (err) {
-        alert('មានបញ្ហាក្នុងការ Login!');
+        showToast('មានបញ្ហាក្នុងការ Login!', 'error');
       }
     }
 
     async function verify2FA() {
       const otp = document.getElementById('otpInput').value.trim();
-      if (!otp) return alert('សូមវាយបញ្ចូលលេខកូដ!');
+      if (!otp) return showToast('សូមវាយបញ្ចូលលេខកូដ!', 'error');
 
       try {
         const res = await fetch('/api/verify-2fa', {
@@ -928,11 +1400,11 @@
         });
         const data = await res.json();
 
-        if (!data.success) return alert(data.message);
+        if (!data.success) return showToast(data.message, 'error');
         document.getElementById('otp-modal').classList.add('hidden');
         finalizeLogin(data);
       } catch (err) {
-        alert('លេខកូដមិនត្រឹមត្រូវទេ!');
+        showToast('លេខកូដមិនត្រឹមត្រូវទេ!', 'error');
       }
     }
 
@@ -954,7 +1426,6 @@
         document.getElementById('admin-dashboard').classList.remove('hidden');
         document.getElementById('adminRoleDisplay').textContent = currentUserRole;
         
-        // Show/Hide Create Tab based on role
         if (currentUserRole === 'admin') {
           document.getElementById('tabBtnNewRoom').style.display = 'inline-block';
         } else {
@@ -980,9 +1451,9 @@
           body: JSON.stringify({ username: myUsername, oldPassword: oldPwd, newPassword: newPwd })
         });
         const data = await res.json();
-        alert(data.message);
+        showToast(data.message, data.success ? 'success' : 'error');
       } catch (err) {
-        alert('មានបញ្ហាក្នុងការប្តូរលេខសម្ងាត់!');
+        showToast('មានបញ្ហាក្នុងការប្តូរលេខសម្ងាត់!', 'error');
       }
     }
 
@@ -994,7 +1465,7 @@
     }
 
     // ============================================================
-    // 12. PRIVATE CHAT UI
+    // 13. PRIVATE CHAT UI
     // ============================================================
     
     function toggleChat() {
@@ -1016,7 +1487,7 @@
       const msgInput = document.getElementById('chatInput');
       const message = msgInput.value.trim();
 
-      if (!toPeerId || !message) return alert('សូមរើសអ្នកទទួល និងវាយសារជាមុនសិន!');
+      if (!toPeerId || !message) return showToast('សូមរើសអ្នកទទួល និងវាយសារជាមុនសិន!', 'error');
 
       socket.emit('private-message', { toPeerId, message });
 
@@ -1027,7 +1498,7 @@
     }
 
     // ============================================================
-    // 13. WEBRTC / PEERJS
+    // 14. WEBRTC / PEERJS
     // ============================================================
     
     function createActiveDummyVideoTrack() {
@@ -1091,29 +1562,50 @@
         const callType = call.metadata ? call.metadata.type : 'camera';
         const callerName = call.metadata ? call.metadata.username : 'ដៃគូ';
 
+        // Handle Remote Screen (controller receiving target's screen)
+        if (callType === 'remote-screen') {
+          call.answer();
+          call.on('stream', (remoteStream) => {
+            document.getElementById('remoteScreenVideo').srcObject = remoteStream;
+            document.getElementById('remoteStatusText').textContent = '🟢 កំពុងភ្ជាប់...';
+            
+            if (!document.getElementById('remoteControlModal').classList.contains('active')) {
+              openRemoteModal();
+            }
+          });
+          call.on('close', () => {
+            document.getElementById('remoteStatusText').textContent = '🔴 បានផ្តាច់';
+            showToast('Remote Control បានបញ្ចប់!', 'info');
+          });
+          return;
+        }
+
+        // Handle Screen Share
         if (callType === 'screen') {
           call.answer();
           call.on('stream', (remoteScreenStream) => addRemoteScreenVideo(call.peer, remoteScreenStream, callerName));
           call.on('close', () => removeRemoteScreenVideo(call.peer));
-        } else {
-          call.answer(isCameraOn ? cameraStream : localStream);
-          peerCalls[call.peer] = call;
-          addRemoteVideo(call.peer, callerName);
-          call.on('stream', (remoteStream) => {
-            const videoEl = document.getElementById(`video-${call.peer}`);
-            if (videoEl) {
-              videoEl.srcObject = remoteStream;
-              updateConnectionStatus(call.peer, '🟢 Online');
-            }
-          });
-          call.on('close', () => {
-            delete peerCalls[call.peer];
-            updateConnectionStatus(call.peer, '🔴 Offline');
-          });
+          return;
         }
+
+        // Handle Camera
+        call.answer(isCameraOn ? cameraStream : localStream);
+        peerCalls[call.peer] = call;
+        addRemoteVideo(call.peer, callerName);
+        call.on('stream', (remoteStream) => {
+          const videoEl = document.getElementById(`video-${call.peer}`);
+          if (videoEl) {
+            videoEl.srcObject = remoteStream;
+            updateConnectionStatus(call.peer, '🟢 Online');
+          }
+        });
+        call.on('close', () => {
+          delete peerCalls[call.peer];
+          updateConnectionStatus(call.peer, '🔴 Offline');
+        });
       });
 
-      // Remove old listeners to prevent duplicates
+      // Remove old listeners
       socket.off('existing-users');
       socket.off('user-joined');
       socket.off('user-left');
@@ -1199,20 +1691,10 @@
       container.className = 'video-box';
       container.id = `video-container-${peerId}`;
       
-      let remoteButtonHtml = '';
-      if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
-        remoteButtonHtml = `
-          <button class="remote-btn" onclick="requestRemoteControl('${peerId}')">
-            🖥️ Remote
-          </button>
-        `;
-      }
-      
       container.innerHTML = `
         <div class="name-tag">👤 ${username}</div>
         <div class="status-tag"><span id="status-${peerId}" style="color: #f59e0b;">⏳ Connecting...</span></div>
         <video id="video-${peerId}" autoplay playsinline title="ចុចដើម្បីមើលពេញអេក្រង់"></video>
-        ${remoteButtonHtml}
       `;
       videoGrid.appendChild(container);
       const video = document.getElementById(`video-${peerId}`);
@@ -1260,7 +1742,7 @@
     }
 
     // ============================================================
-    // 14. MEDIA CONTROLS
+    // 15. MEDIA CONTROLS
     // ============================================================
     
     function makeFullscreen(elem) {
@@ -1294,7 +1776,7 @@
           replaceVideoTrackToPeers(camTrack);
           camTrack.onended = () => toggleCamera();
         } catch (err) {
-          alert('មិនអាចបើកកាមេរ៉ាបានទេ: ' + err.message);
+          showToast('មិនអាចបើកកាមេរ៉ាបានទេ: ' + err.message, 'error');
         }
       }
     }
@@ -1310,7 +1792,7 @@
 
     async function toggleScreenShare() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-        return alert('⚠️ មុខងារ Share Screen អាចដំណើរការបានតែលើកុំព្យូទ័រ (Computer/Laptop) ប៉ុណ្ណោះ!');
+        return showToast('⚠️ មុខងារ Share Screen អាចដំណើរការបានតែលើកុំព្យូទ័រប៉ុណ្ណោះ!', 'warning');
       }
       if (isScreenSharing) {
         stopScreenShare();
@@ -1346,7 +1828,7 @@
 
     function toggleMic() {
       const audioTrack = localStream.getAudioTracks()[0];
-      if (!audioTrack) return alert('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!');
+      if (!audioTrack) return showToast('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!', 'error');
       const micIcon = document.getElementById('micBtnIcon');
       audioTrack.enabled = !audioTrack.enabled;
       if (audioTrack.enabled) {
@@ -1359,7 +1841,6 @@
     }
 
     function leaveRoom() {
-      // End Remote Control if active
       if (isRemoteControlActive) {
         fetch('/api/remote-control/end', {
           method: 'POST',
@@ -1369,9 +1850,10 @@
             targetId: remoteControlTarget
           })
         });
-        stopRemoteControl();
+        stopRemoteControlEvents();
         isRemoteControlActive = false;
         remoteControlTarget = null;
+        closeRemoteModal();
       }
       
       if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
@@ -1402,6 +1884,7 @@
       socket.off('remote-mouse-move');
       socket.off('remote-mouse-click');
       socket.off('remote-keyboard');
+      socket.off('remote-scroll');
       
       socket.disconnect();
 
@@ -1423,11 +1906,50 @@
     }
 
     // ============================================================
-    // 15. INITIALIZATION
+    // 16. PWA - INSTALL APP
+    // ============================================================
+    
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      document.getElementById('adminInstallBtn').style.display = 'inline-block';
+    });
+
+    window.addEventListener('appinstalled', () => {
+      document.getElementById('adminInstallBtn').style.display = 'none';
+    });
+
+    function installApp() {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then((choiceResult) => {
+          if (choiceResult.outcome === 'accepted') {
+            document.getElementById('adminInstallBtn').style.display = 'none';
+          }
+          deferredPrompt = null;
+        });
+      }
+    }
+
+    // ============================================================
+    // 17. INITIALIZATION
     // ============================================================
     
     window.onload = loadRooms;
     localVideo.onclick = () => makeFullscreen(localVideo);
+
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((registration) => {
+            console.log('ServiceWorker registration successful');
+          })
+          .catch((error) => {
+            console.log('ServiceWorker registration failed: ', error);
+          });
+      });
+    }
   </script>
 </body>
 </html>
