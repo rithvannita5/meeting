@@ -2,6 +2,14 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const { ExpressPeerServer } = require('peer');
+
+const peerServer = ExpressPeerServer(server, {
+  debug: true,
+  path: '/peerjs',
+  allow_discovery: true
+});
+
+app.use('/peerjs', peerServer);
 const path = require('path');
 const mongoose = require('mongoose');
 
