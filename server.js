@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const app = express();
 const server = http.createServer(app);
 
-// PeerServer ដំណើរការលើ Server ផ្ទាល់
+// PeerServer
 const peerServer = ExpressPeerServer(server, {
   debug: true,
   path: '/'
@@ -16,18 +16,63 @@ const peerServer = ExpressPeerServer(server, {
 app.use('/peerjs', peerServer);
 
 const io = new Server(server, { 
-  cors: { origin: "*" },
-  transports: ['websocket', 'polling']
+  cors: { 
+    origin: "*",
+    methods: ["GET", "POST"]
+  },
+  transports: ['websocket', 'polling'],
+  allowUpgrades: true,
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  cookie: false
 });
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-// ភ្ជាប់ទៅកាន់ MongoDB Atlas
+// ============== PWA Routes ==============
+
+// Serve manifest.json
+app.get('/manifest.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.sendFile(path.join(__dirname, 'public', 'manifest.json'));
+});
+
+// Serve service worker
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+});
+
+// Serve icons - fallback to SVG if files don't exist
+app.use('/icons', express.static(path.join(__dirname, 'public', 'icons')));
+app.get('/icons/*', (req, res) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="100" fill="#00b4d8"/>
+    <text x="256" y="340" font-family="Arial" font-size="280" font-weight="bold" fill="white" text-anchor="middle">VC</text>
+  </svg>`;
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.send(svg);
+});
+
+// Favicon
+app.get('/favicon.ico', (req, res) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+    <rect width="64" height="64" rx="14" fill="#00b4d8"/>
+    <text x="32" y="44" font-family="Arial" font-size="36" font-weight="bold" fill="white" text-anchor="middle">VC</text>
+  </svg>`;
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.send(svg);
+});
+
+// ============== MongoDB Connection ==============
+
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://rithvannita5_db_user:81Aokzd93Q9Vu3Xb@cluster0.oaj62a4.mongodb.net/meetingDB?retryWrites=true&w=majority&appName=Cluster0";
 
-// User Schema - បន្ថែម role supervisor
+// User Schema
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
@@ -45,7 +90,7 @@ const remoteControlSchema = new mongoose.Schema({
   controllerId: { type: String, required: true },
   targetId: { type: String, required: true },
   roomId: { type: String, required: true },
-  status: { type: String, default: 'pending' } // pending, approved, active, rejected
+  status: { type: String, default: 'pending' }
 });
 
 const User = mongoose.model('User', userSchema);
@@ -80,7 +125,6 @@ app.post('/api/login', async (req, res) => {
     if (!user) return res.status(401).json({ success: false, message: 'ឈ្មោះ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ!' });
     if (user.isBlocked) return res.status(403).json({ success: false, message: 'គណនីត្រូវបានផ្អាក!' });
     
-    // អនុញ្ញាតឱ្យ admin និង supervisor ចូលបានគ្រប់បន្ទប់
     if (user.role !== 'admin' && user.role !== 'supervisor' && user.assignedRoom !== roomId) {
       return res.status(403).json({ success: false, message: `អ្នកគ្មានសិទ្ធិចូលបន្ទប់ ${roomId} ទេ!` });
     }
@@ -127,7 +171,7 @@ app.post('/api/change-password', async (req, res) => {
 
 // ============== Admin & Supervisor APIs ==============
 
-// Get Users - អនុញ្ញាតសម្រាប់ admin និង supervisor
+// Get Users
 app.get('/api/users', async (req, res) => {
   try { 
     const users = await User.find({}, '-password'); 
@@ -136,7 +180,7 @@ app.get('/api/users', async (req, res) => {
   catch (err) { res.status(500).json({ message: 'Error fetching users' }); }
 });
 
-// Create User - អនុញ្ញាតសម្រាប់តែ admin ប៉ុណ្ណោះ
+// Create User - Admin only
 app.post('/api/create-user', async (req, res) => {
   const { username, password, assignedRoom, role } = req.body;
   if (!username || !password || !assignedRoom) return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់!' });
@@ -144,14 +188,13 @@ app.post('/api/create-user', async (req, res) => {
     const exists = await User.findOne({ username });
     if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
     
-    // កំណត់ role ប្រសិនបើមានបញ្ជូនមក
     const userRole = role || 'user';
     await User.create({ username, password, assignedRoom, role: userRole });
     res.json({ success: true, message: 'បង្កើត User ជោគជ័យ!' });
   } catch (err) { res.status(500).json({ message: 'Error creating user' }); }
 });
 
-// Delete User - អនុញ្ញាតសម្រាប់តែ admin
+// Delete User - Admin only
 app.delete('/api/users/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
@@ -163,7 +206,7 @@ app.delete('/api/users/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error deleting user' }); }
 });
 
-// Reset Password - អនុញ្ញាតសម្រាប់ admin និង supervisor
+// Reset Password
 app.put('/api/users/:id/reset-password', async (req, res) => {
   try { 
     const user = await User.findById(req.params.id);
@@ -176,7 +219,7 @@ app.put('/api/users/:id/reset-password', async (req, res) => {
   catch (err) { res.status(500).json({ message: 'Error updating password' }); }
 });
 
-// Toggle Block - អនុញ្ញាតសម្រាប់ admin និង supervisor
+// Toggle Block
 app.put('/api/users/:id/toggle-block', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
@@ -188,7 +231,7 @@ app.put('/api/users/:id/toggle-block', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error updating status' }); }
 });
 
-// Edit Room - អនុញ្ញាតសម្រាប់ admin និង supervisor
+// Edit Room
 app.put('/api/users/:id/edit-room', async (req, res) => {
   try { 
     await User.findByIdAndUpdate(req.params.id, { assignedRoom: req.body.newRoom }); 
@@ -197,7 +240,7 @@ app.put('/api/users/:id/edit-room', async (req, res) => {
   catch (err) { res.status(500).json({ message: 'Error updating room' }); }
 });
 
-// Edit User Role - អនុញ្ញាតសម្រាប់តែ admin
+// Edit User Role - Admin only
 app.put('/api/users/:id/edit-role', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
@@ -214,7 +257,7 @@ app.put('/api/users/:id/edit-role', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error updating role' }); }
 });
 
-// Create Room - អនុញ្ញាតសម្រាប់តែ admin
+// Create Room - Admin only
 app.post('/api/create-room', async (req, res) => {
   const { roomId } = req.body;
   if (!roomId) return res.status(400).json({ message: 'សូមបញ្ចូលឈ្មោះបន្ទប់!' });
@@ -251,7 +294,6 @@ app.get('/api/rooms', async (req, res) => {
 app.post('/api/remote-control/request', async (req, res) => {
   const { controllerId, targetId, roomId } = req.body;
   try {
-    // ពិនិត្យមើលថាតើមានសំណើរួចហើយឬនៅ
     const existing = await RemoteControl.findOne({ controllerId, targetId, status: { $in: ['pending', 'approved', 'active'] } });
     if (existing) {
       return res.status(400).json({ message: 'សំណើរកំពុងដំណើរការរួចហើយ!' });
@@ -259,7 +301,6 @@ app.post('/api/remote-control/request', async (req, res) => {
     
     const request = await RemoteControl.create({ controllerId, targetId, roomId, status: 'pending' });
     
-    // ផ្ញើសំណើរទៅ target
     io.to(roomId).emit('remote-control-request', {
       requestId: request._id,
       controllerId,
@@ -332,7 +373,6 @@ app.post('/api/remote-control/end', async (req, res) => {
 
 io.on('connection', (socket) => {
   
-  // Register Admin or Supervisor
   socket.on('register-admin', () => {
     socket.join('admin-room');
   });
@@ -354,9 +394,7 @@ io.on('connection', (socket) => {
     socket.emit('existing-users', existingUsers);
     socket.to(roomId).emit('user-joined', { peerId, username });
     
-    // លេងសំឡេងពេលមានអ្នកចូល
     io.to(roomId).emit('play-sound', 'join');
-
     io.to('admin-room').emit('rooms-update');
 
     socket.on('disconnect', () => {
@@ -364,10 +402,7 @@ io.on('connection', (socket) => {
       if (roomUsers[roomId]) {
         roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
         socket.to(roomId).emit('user-left', socket.data.peerId);
-        
-        // លេងសំឡេងពេលមានអ្នកចេញ
         io.to(roomId).emit('play-sound', 'leave');
-        
         if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
       }
       io.to('admin-room').emit('rooms-update');
@@ -389,7 +424,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Mouse Events for Remote Control
+  // Remote Control Events
   socket.on('remote-mouse-move', ({ targetId, x, y }) => {
     const roomId = socket.data.roomId;
     if (roomUsers[roomId]) {
@@ -421,5 +456,12 @@ io.on('connection', (socket) => {
   });
 });
 
+// ============== Start Server ==============
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+// Handle socket.io errors
+io.engine.on("connection_error", (err) => {
+  console.log('Socket.IO connection error:', err);
+});
