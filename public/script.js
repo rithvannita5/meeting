@@ -335,63 +335,56 @@ async function startMeeting() {
     socket.emit('join-room', currentRoomId, id, myUsername);
   });
 
-  myPeer.on('call', (call) => {
-    const callType = call.metadata ? call.metadata.type : 'camera';
-    const callerName = call.metadata ? call.metadata.username : 'ដៃគូ';
+  // In startMeeting function, replace the peer.on('call') with:
 
-    if (callType === 'screen') {
-      call.answer();
-      call.on('stream', (remoteScreenStream) => addRemoteScreenVideo(call.peer, remoteScreenStream, callerName));
-      call.on('close', () => removeRemoteScreenVideo(call.peer));
-    } else {
-      call.answer(isCameraOn ? cameraStream : localStream);
-      peerCalls[call.peer] = call;
-      addRemoteVideo(call.peer, callerName);
-      call.on('stream', (remoteStream) => {
-        const videoEl = document.getElementById(`video-${call.peer}`);
-        if (videoEl) { videoEl.srcObject = remoteStream; updateConnectionStatus(call.peer, '🟢 Online'); }
-      });
-      call.on('close', () => { delete peerCalls[call.peer]; updateConnectionStatus(call.peer, '🔴 Offline'); });
-    }
-  });
+myPeer.on('call', (call) => {
+  const callType = call.metadata ? call.metadata.type : 'camera';
+  const callerName = call.metadata ? call.metadata.username : 'ដៃគូ';
 
-  // ហាមដាក់ Listener ក្រៅពី function ប្រសិនបើចង់ Add ក្នុងនេះ ត្រូវ Remove ចាស់ៗចោលសិន
-  socket.off('existing-users');
-  socket.off('user-joined');
-  socket.off('user-left');
-
-  socket.on('existing-users', (users) => {
-    users.forEach((user, index) => {
-      userNamesMap[user.peerId] = user.username;
-      addRemoteVideo(user.peerId, user.username);
-      setTimeout(() => connectToUser(user.peerId), (index + 1) * 500);
-    });
-    updateUserCount();
-    updateChatUserList();
-  });
-
-  socket.on('user-joined', ({ peerId, username }) => {
-    if (peerId !== myId) {
-      userNamesMap[peerId] = username;
-      addRemoteVideo(peerId, username);
-      updateUserCount();
-      updateChatUserList();
-
-      if (isScreenSharing && screenStream) {
-        setTimeout(() => myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } }), 1200);
+  // Handle Remote Screen (for controller receiving target's screen)
+  if (callType === 'remote-screen') {
+    call.answer(); // No stream sent back
+    call.on('stream', (remoteStream) => {
+      // Display remote screen in modal
+      document.getElementById('remoteScreenVideo').srcObject = remoteStream;
+      document.getElementById('remoteStatusText').textContent = '🟢 កំពុងភ្ជាប់...';
+      
+      // Auto-open remote modal if not open
+      if (!document.getElementById('remoteControlModal').classList.contains('active')) {
+        openRemoteModal();
       }
+    });
+    call.on('close', () => {
+      document.getElementById('remoteStatusText').textContent = '🔴 បានផ្តាច់';
+      showToast('Remote Control បានបញ្ចប់!', 'info');
+    });
+    return;
+  }
+
+  // Handle Screen Share
+  if (callType === 'screen') {
+    call.answer();
+    call.on('stream', (remoteScreenStream) => addRemoteScreenVideo(call.peer, remoteScreenStream, callerName));
+    call.on('close', () => removeRemoteScreenVideo(call.peer));
+    return;
+  }
+
+  // Handle Camera
+  call.answer(isCameraOn ? cameraStream : localStream);
+  peerCalls[call.peer] = call;
+  addRemoteVideo(call.peer, callerName);
+  call.on('stream', (remoteStream) => {
+    const videoEl = document.getElementById(`video-${call.peer}`);
+    if (videoEl) {
+      videoEl.srcObject = remoteStream;
+      updateConnectionStatus(call.peer, '🟢 Online');
     }
   });
-
-  socket.on('user-left', (peerId) => {
-    removeRemoteVideo(peerId);
-    removeRemoteScreenVideo(peerId);
-    if (peerCalls[peerId]) { peerCalls[peerId].close(); delete peerCalls[peerId]; }
-    delete userNamesMap[peerId];
-    updateUserCount();
-    updateChatUserList();
+  call.on('close', () => {
+    delete peerCalls[call.peer];
+    updateConnectionStatus(call.peer, '🔴 Offline');
   });
-}
+});
 
 function connectToUser(peerId) {
   if (peerCalls[peerId]) return;
@@ -600,17 +593,33 @@ socket.on('play-sound', (type) => {
   playNotificationSound(type);
 });
 
-// ============== REMOTE CONTROL FUNCTIONS ==============
+// ============================================================
+// REMOTE CONTROL - FULL VERSION (Like AnyDesk)
+// ============================================================
+
 let isRemoteControlActive = false;
 let remoteControlTarget = null;
 let remoteControlRequestId = null;
 let isBeingControlled = false;
+let remotePointer = null;
+let remoteScreenStream = null;
+let remoteControlData = null;
 
-// សំណើរ Remote Control
+// ============== REQUEST REMOTE CONTROL ==============
+
 function requestRemoteControl(targetId) {
-  if (!currentUserRole === 'admin' && !currentUserRole === 'supervisor') {
+  if (currentUserRole !== 'admin' && currentUserRole !== 'supervisor') {
     return alert('អ្នកគ្មានសិទ្ធិប្រើមុខងារ Remote Control ទេ!');
   }
+  
+  const targetName = userNamesMap[targetId] || 'មិត្តភក្តិ';
+  
+  if (!confirm(`តើអ្នកចង់គ្រប់គ្រង Screen របស់ ${targetName} មែនទេ?`)) {
+    return;
+  }
+  
+  // Show loading
+  showToast('⏳ កំពុងផ្ញើសំណើរ Remote Control...', 'info');
   
   fetch('/api/remote-control/request', {
     method: 'POST',
@@ -624,206 +633,643 @@ function requestRemoteControl(targetId) {
   .then(res => res.json())
   .then(data => {
     if (data.success) {
-      alert('កំពុងផ្ញើសំណើរ Remote Control... សូមរង់ចាំការអនុញ្ញាតពីម្ចាស់ Screen!');
       remoteControlRequestId = data.requestId;
+      remoteControlTarget = targetId;
+      showToast('📨 សំណើរត្រូវបានផ្ញើ! សូមរង់ចាំការអនុញ្ញាត...', 'info');
+      
+      // Show waiting status
+      document.getElementById('remoteControlStatus').style.display = 'block';
+      document.getElementById('remoteStatusText').textContent = '⏳ កំពុងរង់ចាំការអនុញ្ញាត...';
     } else {
-      alert('មិនអាចផ្ញើសំណើរបានទេ: ' + data.message);
+      showToast('❌ ' + data.message, 'error');
+    }
+  })
+  .catch(err => {
+    showToast('❌ មានបញ្ហាក្នុងការផ្ញើសំណើរ!', 'error');
+  });
+}
+
+// ============== RECEIVE REMOTE REQUEST (Target) ==============
+
+socket.on('remote-control-request', (data) => {
+  if (data.targetId === myId) {
+    const controllerName = userNamesMap[data.controllerId] || 'មិត្តភក្តិ';
+    remoteControlRequestId = data.requestId;
+    remoteControlData = data;
+    
+    // Show popup
+    document.getElementById('remoteRequesterName').textContent = controllerName;
+    document.getElementById('remoteRequestPopup').classList.add('active');
+    document.getElementById('remoteRequestLoading').style.display = 'none';
+    document.getElementById('remoteApproveBtn').style.display = 'inline-block';
+    document.getElementById('remoteRejectBtn').style.display = 'inline-block';
+  }
+});
+
+// ============== APPROVE / REJECT REMOTE ==============
+
+function approveRemoteControl() {
+  document.getElementById('remoteApproveBtn').style.display = 'none';
+  document.getElementById('remoteRejectBtn').style.display = 'none';
+  document.getElementById('remoteRequestLoading').style.display = 'block';
+  
+  fetch('/api/remote-control/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      requestId: remoteControlRequestId,
+      targetId: myId
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    document.getElementById('remoteRequestPopup').classList.remove('active');
+    if (data.success) {
+      isBeingControlled = true;
+      showToast('✅ អ្នកបានអនុញ្ញាត Remote Control!', 'success');
+      
+      // Show overlay on screen
+      document.getElementById('remoteControlOverlay').classList.remove('hidden');
+      
+      // Start screen sharing to controller
+      startScreenShareForRemote();
+    } else {
+      showToast('❌ មានបញ្ហាក្នុងការអនុញ្ញាត!', 'error');
     }
   });
 }
 
-// ទទួលសំណើរ Remote Control (សម្រាប់ target)
-socket.on('remote-control-request', (data) => {
-  if (data.targetId === myId) {
-    const username = userNamesMap[data.controllerId] || 'មិត្តភក្តិ';
-    if (confirm(`${username} ចង់គ្រប់គ្រង Screen របស់អ្នកពីចម្ងាយ។ តើអ្នកអនុញ្ញាតទេ?`)) {
-      // Approve
-      fetch('/api/remote-control/approve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: data.requestId,
-          targetId: myId
-        })
+function rejectRemoteControl() {
+  document.getElementById('remoteApproveBtn').style.display = 'none';
+  document.getElementById('remoteRejectBtn').style.display = 'none';
+  document.getElementById('remoteRequestLoading').style.display = 'block';
+  
+  fetch('/api/remote-control/reject', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: remoteControlRequestId })
+  })
+  .then(() => {
+    document.getElementById('remoteRequestPopup').classList.remove('active');
+    showToast('❌ អ្នកបានបដិសេធ Remote Control!', 'error');
+  });
+}
+
+// ============== START SCREEN SHARE FOR REMOTE ==============
+
+async function startScreenShareForRemote() {
+  try {
+    // Request screen capture
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { 
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 }
+      },
+      audio: false
+    });
+    
+    remoteScreenStream = stream;
+    
+    // Send screen stream to controller via PeerJS
+    if (myPeer && remoteControlData) {
+      const call = myPeer.call(remoteControlData.controllerId, stream, {
+        metadata: { type: 'remote-screen', username: myUsername }
       });
-      isBeingControlled = true;
-      alert('អ្នកបានអនុញ្ញាត Remote Control! អ្នកគ្រប់គ្រងអាចបញ្ជា Screen របស់អ្នកបាន។');
-    } else {
-      // Reject
-      fetch('/api/remote-control/reject', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: data.requestId })
+      
+      call.on('close', () => {
+        stopScreenShareForRemote();
       });
     }
+    
+    // Stop sharing when user clicks stop
+    stream.getVideoTracks()[0].onended = () => {
+      stopScreenShareForRemote();
+    };
+    
+  } catch (err) {
+    console.error('Screen share error:', err);
+    showToast('❌ មិនអាចចែករំលែក Screen បានទេ!', 'error');
+    isBeingControlled = false;
+    document.getElementById('remoteControlOverlay').classList.add('hidden');
   }
-});
+}
 
-// Remote Control Approved (សម្រាប់ controller)
+function stopScreenShareForRemote() {
+  if (remoteScreenStream) {
+    remoteScreenStream.getTracks().forEach(track => track.stop());
+    remoteScreenStream = null;
+  }
+  isBeingControlled = false;
+  document.getElementById('remoteControlOverlay').classList.add('hidden');
+  
+  // Notify controller
+  socket.emit('remote-control-ended', {
+    controllerId: remoteControlData?.controllerId,
+    targetId: myId
+  });
+}
+
+// ============== RECEIVE REMOTE SCREEN (Controller) ==============
+
 socket.on('remote-control-approved', (data) => {
   if (data.controllerId === myId) {
-    alert('✅ Remote Control ត្រូវបានអនុញ្ញាត! អ្នកអាចគ្រប់គ្រង Screen ពីចម្ងាយបានហើយ។');
+    showToast('✅ Remote Control ត្រូវបានអនុញ្ញាត!', 'success');
     isRemoteControlActive = true;
     remoteControlTarget = data.targetId;
-    startRemoteControl();
+    
+    // Open remote control modal
+    openRemoteModal();
   }
 });
 
-// Remote Control Rejected
 socket.on('remote-control-rejected', (data) => {
   if (data.controllerId === myId) {
-    alert('❌ Remote Control ត្រូវបានបដិសេធ!');
+    showToast('❌ Remote Control ត្រូវបានបដិសេធ!', 'error');
     isRemoteControlActive = false;
     remoteControlTarget = null;
+    document.getElementById('remoteControlStatus').style.display = 'none';
   }
 });
 
-// Remote Control Ended
 socket.on('remote-control-ended', (data) => {
   if (data.controllerId === myId) {
-    alert('Remote Control បានបញ្ចប់!');
+    showToast('Remote Control បានបញ្ចប់!', 'info');
     isRemoteControlActive = false;
     remoteControlTarget = null;
-    stopRemoteControl();
+    closeRemoteModal();
   }
   if (data.targetId === myId) {
     isBeingControlled = false;
-    alert('Remote Control បានបញ្ចប់!');
+    document.getElementById('remoteControlOverlay').classList.add('hidden');
+    stopScreenShareForRemote();
+    showToast('Remote Control បានបញ្ចប់!', 'info');
   }
 });
 
-// ចាប់ផ្ដើម Remote Control (Mouse & Keyboard)
-function startRemoteControl() {
-  if (!isRemoteControlActive) return;
+// ============== OPEN / CLOSE REMOTE MODAL ==============
+
+function openRemoteModal() {
+  const modal = document.getElementById('remoteControlModal');
+  modal.classList.add('active');
+  modal.style.display = 'flex';
   
-  document.addEventListener('mousemove', handleRemoteMouseMove);
-  document.addEventListener('click', handleRemoteMouseClick);
-  document.addEventListener('keydown', handleRemoteKeyboard);
+  const targetName = userNamesMap[remoteControlTarget] || 'អ្នកប្រើ';
+  document.getElementById('remoteControlUser').textContent = `កំពុងគ្រប់គ្រង: ${targetName}`;
   
-  alert('🎯 Remote Control បានចាប់ផ្ដើម! អ្នកអាចប្រើ Mouse និង Keyboard ដើម្បីបញ្ជា Screen ចម្ងាយ។');
+  document.getElementById('remoteControlStatus').style.display = 'block';
+  document.getElementById('remoteStatusText').textContent = '🟢 កំពុងភ្ជាប់...';
+  
+  // Start remote control events
+  startRemoteControlEvents();
 }
 
-function stopRemoteControl() {
+function closeRemoteModal() {
+  const modal = document.getElementById('remoteControlModal');
+  modal.classList.remove('active');
+  modal.style.display = 'none';
+  
+  // Stop remote control
+  if (isRemoteControlActive) {
+    endRemoteControl();
+  }
+}
+
+function endRemoteControl() {
+  if (!isRemoteControlActive) return;
+  
+  fetch('/api/remote-control/end', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      controllerId: myId,
+      targetId: remoteControlTarget
+    })
+  });
+  
+  isRemoteControlActive = false;
+  remoteControlTarget = null;
+  stopRemoteControlEvents();
+  closeRemoteModal();
+  showToast('Remote Control បានបញ្ចប់!', 'info');
+}
+
+// ============== REMOTE CONTROL EVENTS (Mouse & Keyboard) ==============
+
+function startRemoteControlEvents() {
+  document.addEventListener('mousemove', handleRemoteMouseMove);
+  document.addEventListener('mousedown', handleRemoteMouseDown);
+  document.addEventListener('mouseup', handleRemoteMouseUp);
+  document.addEventListener('keydown', handleRemoteKeyboard);
+  document.addEventListener('wheel', handleRemoteWheel);
+  
+  document.getElementById('remoteStatusText').textContent = '🟢 កំពុងគ្រប់គ្រង...';
+}
+
+function stopRemoteControlEvents() {
   document.removeEventListener('mousemove', handleRemoteMouseMove);
-  document.removeEventListener('click', handleRemoteMouseClick);
+  document.removeEventListener('mousedown', handleRemoteMouseDown);
+  document.removeEventListener('mouseup', handleRemoteMouseUp);
   document.removeEventListener('keydown', handleRemoteKeyboard);
+  document.removeEventListener('wheel', handleRemoteWheel);
 }
 
 function handleRemoteMouseMove(event) {
   if (!isRemoteControlActive || !remoteControlTarget) return;
   
-  // បញ្ជូនទីតាំង Mouse
+  // Get position relative to remote video
+  const video = document.getElementById('remoteScreenVideo');
+  const rect = video.getBoundingClientRect();
+  
+  // Calculate position on remote screen
+  const x = ((event.clientX - rect.left) / rect.width) * 1920;
+  const y = ((event.clientY - rect.top) / rect.height) * 1080;
+  
   socket.emit('remote-mouse-move', {
     targetId: remoteControlTarget,
-    x: event.clientX,
-    y: event.clientY
+    x: Math.max(0, Math.min(1920, x)),
+    y: Math.max(0, Math.min(1080, y))
   });
 }
 
-function handleRemoteMouseClick(event) {
+function handleRemoteMouseDown(event) {
   if (!isRemoteControlActive || !remoteControlTarget) return;
+  
+  const video = document.getElementById('remoteScreenVideo');
+  const rect = video.getBoundingClientRect();
+  
+  const x = ((event.clientX - rect.left) / rect.width) * 1920;
+  const y = ((event.clientY - rect.top) / rect.height) * 1080;
   
   socket.emit('remote-mouse-click', {
     targetId: remoteControlTarget,
-    x: event.clientX,
-    y: event.clientY
+    x: Math.max(0, Math.min(1920, x)),
+    y: Math.max(0, Math.min(1080, y)),
+    button: event.button
+  });
+}
+
+function handleRemoteMouseUp(event) {
+  if (!isRemoteControlActive || !remoteControlTarget) return;
+  
+  socket.emit('remote-mouse-up', {
+    targetId: remoteControlTarget,
+    button: event.button
   });
 }
 
 function handleRemoteKeyboard(event) {
   if (!isRemoteControlActive || !remoteControlTarget) return;
+  if (event.key === 'Escape') return;
   
   socket.emit('remote-keyboard', {
     targetId: remoteControlTarget,
-    key: event.key
+    key: event.key,
+    code: event.code,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    metaKey: event.metaKey
   });
+  
+  event.preventDefault();
 }
 
-// ទទួល Mouse/Keyboard Events (សម្រាប់ target)
+function handleRemoteWheel(event) {
+  if (!isRemoteControlActive || !remoteControlTarget) return;
+  
+  socket.emit('remote-scroll', {
+    targetId: remoteControlTarget,
+    deltaY: event.deltaY,
+    deltaX: event.deltaX
+  });
+  
+  event.preventDefault();
+}
+
+// ============== RECEIVE REMOTE EVENTS (Target) ==============
+
+let remoteMouseX = 0;
+let remoteMouseY = 0;
+
 socket.on('remote-mouse-move', (data) => {
   if (!isBeingControlled) return;
-  // បង្ហាញទីតាំង Mouse នៅលើ Screen (បង្ហាញជា pointer)
+  remoteMouseX = data.x;
+  remoteMouseY = data.y;
   showRemotePointer(data.x, data.y);
 });
 
 socket.on('remote-mouse-click', (data) => {
   if (!isBeingControlled) return;
-  // Simulate click
-  const element = document.elementFromPoint(data.x, data.y);
+  
+  // Simulate click at position
+  const element = document.elementFromPoint(
+    (data.x / 1920) * window.innerWidth,
+    (data.y / 1080) * window.innerHeight
+  );
+  
   if (element) {
-    element.click();
-    // បង្ហាញ animation click
-    showRemoteClick(data.x, data.y);
+    // Create click event
+    const clickEvent = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: (data.x / 1920) * window.innerWidth,
+      clientY: (data.y / 1080) * window.innerHeight
+    });
+    element.dispatchEvent(clickEvent);
+    
+    // Show click effect
+    showRemoteClick(
+      (data.x / 1920) * window.innerWidth,
+      (data.y / 1080) * window.innerHeight
+    );
   }
+});
+
+socket.on('remote-mouse-up', (data) => {
+  if (!isBeingControlled) return;
+  // Handle mouse up if needed
 });
 
 socket.on('remote-keyboard', (data) => {
   if (!isBeingControlled) return;
-  // Simulate keyboard input
+  
   const activeElement = document.activeElement;
-  if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
-    const event = new KeyboardEvent('keydown', { key: data.key });
+  if (activeElement && (activeElement.tagName === 'INPUT' || 
+                        activeElement.tagName === 'TEXTAREA' || 
+                        activeElement.isContentEditable)) {
+    // Simulate keyboard input
+    const event = new KeyboardEvent('keydown', {
+      key: data.key,
+      code: data.code,
+      ctrlKey: data.ctrlKey,
+      shiftKey: data.shiftKey,
+      altKey: data.altKey,
+      metaKey: data.metaKey,
+      bubbles: true
+    });
     activeElement.dispatchEvent(event);
+    
+    // For text input
+    if (data.key.length === 1 && !data.ctrlKey && !data.metaKey) {
+      const inputEvent = new InputEvent('input', { bubbles: true });
+      activeElement.dispatchEvent(inputEvent);
+    }
   }
 });
 
-// បង្ហាញ Remote Pointer
-let remotePointer = null;
+socket.on('remote-scroll', (data) => {
+  if (!isBeingControlled) return;
+  
+  window.scrollBy({
+    top: data.deltaY * 2,
+    left: data.deltaX * 2,
+    behavior: 'smooth'
+  });
+});
+
+// ============== REMOTE POINTER VISUALIZATION ==============
 
 function showRemotePointer(x, y) {
   if (!remotePointer) {
     remotePointer = document.createElement('div');
-    remotePointer.style.cssText = `
-      position: fixed;
-      width: 20px;
-      height: 20px;
-      border: 2px solid red;
-      border-radius: 50%;
-      background: rgba(255, 0, 0, 0.3);
-      pointer-events: none;
-      z-index: 9999;
-      transform: translate(-50%, -50%);
-      transition: left 0.05s, top 0.05s;
-    `;
+    remotePointer.className = 'remote-pointer';
     document.body.appendChild(remotePointer);
   }
-  remotePointer.style.left = x + 'px';
-  remotePointer.style.top = y + 'px';
+  
+  // Convert from 1920x1080 to screen coordinates
+  const screenX = (x / 1920) * window.innerWidth;
+  const screenY = (y / 1080) * window.innerHeight;
+  
+  remotePointer.style.left = screenX + 'px';
+  remotePointer.style.top = screenY + 'px';
 }
 
 function showRemoteClick(x, y) {
   const clickEffect = document.createElement('div');
-  clickEffect.style.cssText = `
-    position: fixed;
-    width: 30px;
-    height: 30px;
-    border: 3px solid #00ff00;
-    border-radius: 50%;
-    background: rgba(0, 255, 0, 0.2);
-    pointer-events: none;
-    z-index: 9999;
-    transform: translate(-50%, -50%);
-    animation: clickPulse 0.5s ease-out forwards;
-  `;
+  clickEffect.className = 'remote-click-effect';
   clickEffect.style.left = x + 'px';
   clickEffect.style.top = y + 'px';
   document.body.appendChild(clickEffect);
   
-  // Remove after animation
   setTimeout(() => {
     if (clickEffect.parentNode) clickEffect.remove();
-  }, 500);
+  }, 600);
 }
 
-// Add CSS animation for click effect
-const style = document.createElement('style');
-style.textContent = `
-  @keyframes clickPulse {
-    0% { transform: translate(-50%, -50%) scale(0.5); opacity: 1; }
-    100% { transform: translate(-50%, -50%) scale(2); opacity: 0; }
+// ============== RECEIVE REMOTE SCREEN STREAM ==============
+
+// Listen for remote screen stream from PeerJS
+// This should be handled in the PeerJS call event
+
+// Add to peer call handler in startMeeting()
+// Modify the existing peer.on('call') handler:
+
+// In the existing code, find peer.on('call') and add:
+// if (call.metadata.type === 'remote-screen') {
+//   call.answer();
+//   call.on('stream', (stream) => {
+//     document.getElementById('remoteScreenVideo').srcObject = stream;
+//     document.getElementById('remoteStatusText').textContent = '🟢 កំពុងភ្ជាប់...';
+//     // Auto-show remote modal if not open
+//     if (!document.getElementById('remoteControlModal').classList.contains('active')) {
+//       openRemoteModal();
+//     }
+//   });
+// }
+
+// ============== TOAST NOTIFICATION ==============
+
+function showToast(message, type = 'info') {
+  const toast = document.createElement('div');
+  const colors = {
+    success: '#10b981',
+    error: '#ef4444',
+    info: '#48cae4',
+    warning: '#f59e0b'
+  };
+  
+  toast.style.cssText = `
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 25px;
+    border-radius: 10px;
+    color: white;
+    font-weight: bold;
+    z-index: 999999;
+    background: ${colors[type] || '#48cae4'};
+    box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+    animation: slideUp 0.3s ease;
+    max-width: 90%;
+    text-align: center;
+    font-size: 14px;
+  `;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.3s';
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
+// ============== UPDATE addRemoteVideo - Remove Remote Button from Video ==============
+
+// Modify addRemoteVideo function - Remove the remote button from video boxes
+// Because we now use the modal system
+
+function addRemoteVideo(peerId, username) {
+  if (document.getElementById(`video-container-${peerId}`)) return;
+  const container = document.createElement('div');
+  container.className = 'video-box';
+  container.id = `video-container-${peerId}`;
+  
+  // REMOVED: Remote button from here - now using modal system
+  container.innerHTML = `
+    <div class="name-tag">👤 ${username}</div>
+    <div class="status-tag"><span id="status-${peerId}" style="color: #f59e0b;">⏳ Connecting...</span></div>
+    <video id="video-${peerId}" autoplay playsinline title="ចុចដើម្បីមើលពេញអេក្រង់"></video>
+  `;
+  videoGrid.appendChild(container);
+  const video = document.getElementById(`video-${peerId}`);
+  if (video) video.onclick = () => makeFullscreen(video);
+}
+
+// ============== ADD REMOTE BUTTON IN HEADER ==============
+
+// Add a remote button next to user name or in top bar
+// This will be added dynamically when a user is selected
+
+function addRemoteControlButton() {
+  // Find all video containers and add remote button as overlay
+  // Or add a button in the header that shows a dropdown of users
+}
+
+// Add remote button to header
+function addHeaderRemoteButton() {
+  const headerBar = document.querySelector('.header-bar .top-actions');
+  if (headerBar) {
+    const remoteBtn = document.createElement('button');
+    remoteBtn.className = 'btn-purple';
+    remoteBtn.innerHTML = '🖥️ Remote Control';
+    remoteBtn.style.cssText = 'padding: 8px 15px; font-size: 13px;';
+    remoteBtn.onclick = showRemoteUserSelector;
+    headerBar.prepend(remoteBtn);
   }
-`;
-document.head.appendChild(style);
+}
+
+function showRemoteUserSelector() {
+  if (currentUserRole !== 'admin' && currentUserRole !== 'supervisor') {
+    return showToast('អ្នកគ្មានសិទ្ធិប្រើ Remote Control!', 'error');
+  }
+  
+  // Create user selector modal
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.8);
+    z-index: 99998;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  `;
+  
+  const modal = document.createElement('div');
+  modal.style.cssText = `
+    background: #1c2541;
+    border-radius: 15px;
+    padding: 30px;
+    max-width: 400px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+  `;
+  
+  let usersHtml = '<h3 style="color:#48cae4; margin-bottom:20px;">🖥️ ជ្រើសរើសអ្នកប្រើសម្រាប់ Remote</h3>';
+  
+  // Get all users in room except self
+  const users = Object.entries(userNamesMap).filter(([id, name]) => id !== myId);
+  
+  if (users.length === 0) {
+    usersHtml += '<p style="color:#94a3b8;">គ្មានអ្នកប្រើផ្សេងទៀតក្នុងបន្ទប់ទេ!</p>';
+  } else {
+    users.forEach(([id, name]) => {
+      usersHtml += `
+        <button onclick="selectRemoteTarget('${id}')" style="
+          display:block; width:100%; padding:12px 15px;
+          margin:8px 0; background:#0b132b; border:1px solid #334155;
+          border-radius:8px; color:white; cursor:pointer;
+          text-align:left; font-size:14px;
+          transition: all 0.2s;
+        " onmouseover="this.style.borderColor='#48cae4'" onmouseout="this.style.borderColor='#334155'">
+          👤 ${name}
+        </button>
+      `;
+    });
+  }
+  
+  usersHtml += `
+    <button onclick="this.parentElement.parentElement.remove()" style="
+      display:block; width:100%; padding:10px; margin-top:15px;
+      background:#ef4444; border:none; border-radius:8px;
+      color:white; cursor:pointer; font-weight:bold;
+    ">បិទ</button>
+  `;
+  
+  modal.innerHTML = usersHtml;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  
+  // Close on click outside
+  overlay.onclick = (e) => {
+    if (e.target === overlay) overlay.remove();
+  };
+}
+
+function selectRemoteTarget(targetId) {
+  // Close selector
+  document.querySelector('div[style*="z-index: 99998"]')?.remove();
+  
+  // Request remote control
+  requestRemoteControl(targetId);
+}
+
+// ============== INIT REMOTE CONTROL ==============
+
+// Call this after login
+function initRemoteControl() {
+  if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
+    addHeaderRemoteButton();
+  }
+}
+
+// Modify finalizeLogin to call initRemoteControl
+// In finalizeLogin function, add: initRemoteControl();
+
+// ============== PEERJS CALL HANDLER FOR REMOTE SCREEN ==============
+
+// Modify the peer.on('call') handler in startMeeting
+// Find this section and add the remote-screen handling:
+
+// In startMeeting function, find peer.on('call') and add:
+// if (call.metadata && call.metadata.type === 'remote-screen') {
+//   call.answer(); // Don't send any stream back
+//   call.on('stream', (stream) => {
+//     document.getElementById('remoteScreenVideo').srcObject = stream;
+//     document.getElementById('remoteStatusText').textContent = '🟢 កំពុងភ្ជាប់...';
+//     // Auto-open remote modal
+//     if (!document.getElementById('remoteControlModal').classList.contains('active')) {
+//       openRemoteModal();
+//     }
+//   });
+//   call.on('close', () => {
+//     document.getElementById('remoteStatusText').textContent = '🔴 បានផ្តាច់';
+//   });
+// }
 
 // ============== UPDATE USER TABLE WITH ROLE ==============
 // កែប្រែ function loadUsersTable() ដើម្បីបង្ហាញ Role និងប៊ូតុង Edit Role
