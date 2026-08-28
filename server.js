@@ -15,23 +15,47 @@ const peerServer = ExpressPeerServer(server, {
 });
 app.use('/peerjs', peerServer);
 
+// ========== FIX: Socket.IO Configuration ==========
 const io = new Server(server, { 
   cors: { 
     origin: "*",
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: true
   },
   transports: ['websocket', 'polling'],
   allowUpgrades: true,
   pingTimeout: 60000,
   pingInterval: 25000,
-  cookie: false
+  cookie: false,
+  upgradeTimeout: 10000,
+  allowEIO3: true
+});
+
+// ========== FIX: WebSocket Upgrade Handler ==========
+server.on('upgrade', (request, socket, head) => {
+  console.log('WebSocket upgrade request received');
+  io.engine.handleUpgrade(request, socket, head, (ws) => {
+    io.engine.attach(ws, request);
+  });
+});
+
+io.engine.on("connection_error", (err) => {
+  console.log('Socket.IO connection error:', err);
+});
+
+io.engine.on("connection", (socket) => {
+  console.log('Socket.IO engine connection established');
 });
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ============== PWA Routes ==============
+// ========== PING Endpoint ==========
+app.get('/ping', (req, res) => {
+  res.send('pong');
+});
 
+// ========== PWA Routes ==========
 app.get('/manifest.json', (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'public, max-age=3600');
@@ -64,11 +88,9 @@ app.get('/favicon.ico', (req, res) => {
   res.send(svg);
 });
 
-// ============== MongoDB Connection ==============
-
+// ========== MongoDB Connection ==========
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://rithvannita5_db_user:81Aokzd93Q9Vu3Xb@cluster0.oaj62a4.mongodb.net/meetingDB?retryWrites=true&w=majority&appName=Cluster0";
 
-// User Schema
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
@@ -110,9 +132,7 @@ const roomUsers = {};
 const activeSockets = new Map();
 const otpStore = {};
 
-// ============== API Routes ==============
-
-// Login
+// ========== API Routes ==========
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
   try {
@@ -141,7 +161,6 @@ app.post('/api/login', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: 'Server error' }); }
 });
 
-// Verify 2FA
 app.post('/api/verify-2fa', async (req, res) => {
   const { username, password, otp } = req.body;
   if (otpStore[username] && otpStore[username] === otp) {
@@ -153,7 +172,6 @@ app.post('/api/verify-2fa', async (req, res) => {
   }
 });
 
-// Change Password
 app.post('/api/change-password', async (req, res) => {
   const { username, oldPassword, newPassword } = req.body;
   try {
@@ -164,9 +182,6 @@ app.post('/api/change-password', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: 'Server error' }); }
 });
 
-// ============== Admin & Supervisor APIs ==============
-
-// Get Users
 app.get('/api/users', async (req, res) => {
   try { 
     const users = await User.find({}, '-password'); 
@@ -175,21 +190,18 @@ app.get('/api/users', async (req, res) => {
   catch (err) { res.status(500).json({ message: 'Error fetching users' }); }
 });
 
-// Create User - Admin only
 app.post('/api/create-user', async (req, res) => {
   const { username, password, assignedRoom, role } = req.body;
   if (!username || !password || !assignedRoom) return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់!' });
   try {
     const exists = await User.findOne({ username });
     if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
-    
     const userRole = role || 'user';
     await User.create({ username, password, assignedRoom, role: userRole });
     res.json({ success: true, message: 'បង្កើត User ជោគជ័យ!' });
   } catch (err) { res.status(500).json({ message: 'Error creating user' }); }
 });
 
-// Delete User - Admin only
 app.delete('/api/users/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
@@ -201,7 +213,6 @@ app.delete('/api/users/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error deleting user' }); }
 });
 
-// Reset Password
 app.put('/api/users/:id/reset-password', async (req, res) => {
   try { 
     const user = await User.findById(req.params.id);
@@ -214,7 +225,6 @@ app.put('/api/users/:id/reset-password', async (req, res) => {
   catch (err) { res.status(500).json({ message: 'Error updating password' }); }
 });
 
-// Toggle Block
 app.put('/api/users/:id/toggle-block', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
@@ -226,7 +236,6 @@ app.put('/api/users/:id/toggle-block', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error updating status' }); }
 });
 
-// Edit Room
 app.put('/api/users/:id/edit-room', async (req, res) => {
   try { 
     await User.findByIdAndUpdate(req.params.id, { assignedRoom: req.body.newRoom }); 
@@ -235,7 +244,6 @@ app.put('/api/users/:id/edit-room', async (req, res) => {
   catch (err) { res.status(500).json({ message: 'Error updating room' }); }
 });
 
-// Edit User Role - Admin only
 app.put('/api/users/:id/edit-role', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
@@ -252,7 +260,6 @@ app.put('/api/users/:id/edit-role', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error updating role' }); }
 });
 
-// Create Room - Admin only
 app.post('/api/create-room', async (req, res) => {
   const { roomId } = req.body;
   if (!roomId) return res.status(400).json({ message: 'សូមបញ្ចូលឈ្មោះបន្ទប់!' });
@@ -264,7 +271,6 @@ app.post('/api/create-room', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error creating room' }); }
 });
 
-// Get Rooms Status
 app.get('/api/rooms-status', async (req, res) => {
   try {
     const rooms = await Room.find();
@@ -277,15 +283,12 @@ app.get('/api/rooms-status', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error fetching status' }); }
 });
 
-// Get Rooms
 app.get('/api/rooms', async (req, res) => {
   try { const rooms = await Room.find(); res.json({ rooms: rooms.map(r => r.roomId) }); } 
   catch (err) { res.status(500).json({ message: 'Error fetching rooms' }); }
 });
 
-// ============== Remote Control APIs ==============
-
-// Request Remote Control
+// ========== Remote Control APIs ==========
 app.post('/api/remote-control/request', async (req, res) => {
   const { controllerId, targetId, roomId } = req.body;
   try {
@@ -293,59 +296,45 @@ app.post('/api/remote-control/request', async (req, res) => {
     if (existing) {
       return res.status(400).json({ message: 'សំណើរកំពុងដំណើរការរួចហើយ!' });
     }
-    
     const request = await RemoteControl.create({ controllerId, targetId, roomId, status: 'pending' });
-    
     io.to(roomId).emit('remote-control-request', {
       requestId: request._id,
       controllerId,
       targetId,
       roomId
     });
-    
     res.json({ success: true, requestId: request._id });
   } catch (err) { res.status(500).json({ message: 'Error requesting remote control' }); }
 });
 
-// Approve Remote Control
 app.post('/api/remote-control/approve', async (req, res) => {
   const { requestId, targetId } = req.body;
   try {
-    const request = await RemoteControl.findByIdAndUpdate(
-      requestId, 
-      { status: 'approved' },
-      { new: true }
-    );
+    const request = await RemoteControl.findByIdAndUpdate(requestId, { status: 'approved' }, { new: true });
     if (!request) return res.status(404).json({ message: 'សំណើរមិនមានទេ!' });
-    
     io.to(request.roomId).emit('remote-control-approved', {
       requestId: request._id,
       controllerId: request.controllerId,
       targetId: request.targetId
     });
-    
     res.json({ success: true });
   } catch (err) { res.status(500).json({ message: 'Error approving remote control' }); }
 });
 
-// Reject Remote Control
 app.post('/api/remote-control/reject', async (req, res) => {
   const { requestId } = req.body;
   try {
     const request = await RemoteControl.findByIdAndUpdate(requestId, { status: 'rejected' }, { new: true });
     if (!request) return res.status(404).json({ message: 'សំណើរមិនមានទេ!' });
-    
     io.to(request.roomId).emit('remote-control-rejected', {
       requestId: request._id,
       controllerId: request.controllerId,
       targetId: request.targetId
     });
-    
     res.json({ success: true });
   } catch (err) { res.status(500).json({ message: 'Error rejecting remote control' }); }
 });
 
-// End Remote Control
 app.post('/api/remote-control/end', async (req, res) => {
   const { controllerId, targetId } = req.body;
   try {
@@ -364,12 +353,13 @@ app.post('/api/remote-control/end', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error ending remote control' }); }
 });
 
-// ============== Socket.io ==============
-
+// ========== Socket.io ==========
 io.on('connection', (socket) => {
+  console.log('New socket connected:', socket.id);
   
   socket.on('register-admin', () => {
     socket.join('admin-room');
+    console.log('Admin registered:', socket.id);
   });
 
   socket.on('join-room', (roomId, peerId, username) => {
@@ -388,11 +378,11 @@ io.on('connection', (socket) => {
 
     socket.emit('existing-users', existingUsers);
     socket.to(roomId).emit('user-joined', { peerId, username });
-    
     io.to(roomId).emit('play-sound', 'join');
     io.to('admin-room').emit('rooms-update');
 
     socket.on('disconnect', () => {
+      console.log('Socket disconnected:', socket.id);
       activeSockets.delete(socket.id);
       if (roomUsers[roomId]) {
         roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
@@ -404,7 +394,6 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Private Message
   socket.on('private-message', ({ toPeerId, message }) => {
     const roomId = socket.data.roomId;
     if (roomUsers[roomId]) {
@@ -419,7 +408,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Remote Control Events
   socket.on('remote-mouse-move', ({ targetId, x, y }) => {
     const roomId = socket.data.roomId;
     if (roomUsers[roomId]) {
@@ -451,8 +439,18 @@ io.on('connection', (socket) => {
   });
 });
 
-// ============== Start Server ==============
+// ========== Keep-alive for Render ==========
+setInterval(() => {
+  const https = require('https');
+  const hostname = process.env.RENDER_EXTERNAL_HOSTNAME || 'meeting-mu6x.onrender.com';
+  https.get(`https://${hostname}/ping`, (res) => {
+    console.log('Keep-alive ping sent');
+  }).on('error', (err) => {
+    console.log('Keep-alive ping failed:', err.message);
+  });
+}, 60000);
 
+// ========== Start Server ==========
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
