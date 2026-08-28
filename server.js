@@ -15,23 +15,19 @@ const peerServer = ExpressPeerServer(server, {
 });
 app.use('/peerjs', peerServer);
 
-// ========== FIX: Socket.IO with better configuration ==========
+// ========== FIX: Socket.IO with WebSocket only ==========
 const io = new Server(server, { 
   cors: { 
     origin: "*",
     methods: ["GET", "POST"],
     credentials: true
   },
-  transports: ['polling', 'websocket'], // polling first, then upgrade to websocket
-  allowUpgrades: true,
+  transports: ['websocket'], // Only WebSocket, no polling
+  allowUpgrades: false,
   pingTimeout: 60000,
   pingInterval: 25000,
   cookie: false,
-  upgradeTimeout: 30000,
-  allowEIO3: true,
-  // បង្ខំឲ្យ reconnect
   connectTimeout: 45000,
-  // បង្កើន maxHttpBufferSize
   maxHttpBufferSize: 1e8
 });
 
@@ -55,7 +51,7 @@ io.engine.on("connection", (socket) => {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ========== PING Endpoint for keep-alive ==========
+// ========== PING Endpoint ==========
 app.get('/ping', (req, res) => {
   res.send('pong');
 });
@@ -137,7 +133,7 @@ const roomUsers = {};
 const activeSockets = new Map();
 const otpStore = {};
 
-// ========== API Routes (keep existing) ==========
+// ========== API Routes ==========
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
   try {
