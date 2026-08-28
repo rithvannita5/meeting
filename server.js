@@ -15,25 +15,32 @@ const peerServer = ExpressPeerServer(server, {
 });
 app.use('/peerjs', peerServer);
 
-// ========== FIX: Socket.IO with WebSocket only ==========
+// ========== FIX: Socket.IO with Polling first, then upgrade ==========
 const io = new Server(server, { 
   cors: { 
     origin: "*",
     methods: ["GET", "POST"],
     credentials: true
   },
-  transports: ['websocket'], // Only WebSocket, no polling
-  allowUpgrades: false,
+  transports: ['polling', 'websocket'], // Polling first, then upgrade
+  allowUpgrades: true,
   pingTimeout: 60000,
   pingInterval: 25000,
   cookie: false,
   connectTimeout: 45000,
-  maxHttpBufferSize: 1e8
+  maxHttpBufferSize: 1e8,
+  // កំណត់ឲ្យមានការ Upgrade យឺតៗ
+  upgradeTimeout: 30000,
+  allowEIO3: true
 });
 
-// ========== FIX: Handle upgrade properly ==========
+// ========== FIX: Handle upgrade with proper headers ==========
 server.on('upgrade', (request, socket, head) => {
   console.log('🔌 WebSocket upgrade request received');
+  // បន្ថែម headers សម្រាប់ Render
+  request.headers['x-forwarded-proto'] = 'https';
+  request.headers['x-forwarded-for'] = request.headers['x-forwarded-for'] || request.socket.remoteAddress;
+  
   io.engine.handleUpgrade(request, socket, head, (ws) => {
     io.engine.attach(ws, request);
   });
