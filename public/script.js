@@ -13,7 +13,7 @@ let screenStream = null;
 
 const peerCalls = {};
 const userNamesMap = {};
-const screenCalls = {}; // ✅ បន្ថែមសម្រាប់រក្សាទុក screen calls
+const screenCalls = {};
 
 let isCameraOn = false;
 let isScreenSharing = false;
@@ -217,7 +217,6 @@ socket.on('user-joined', ({ peerId, username }) => {
     updateUserCount();
     updateChatUserList();
 
-    // ✅ ផ្ញើ screen stream ទៅកាន់ user ថ្មី
     if (isScreenSharing && screenStream) {
       setTimeout(() => {
         if (myPeer && screenStream) {
@@ -234,6 +233,10 @@ socket.on('user-joined', ({ peerId, username }) => {
             call.on('error', (err) => {
               console.error('Screen share error to new user:', err);
               delete screenCalls[peerId];
+              // Show fallback button
+              if (isScreenSharing) {
+                document.getElementById('screenBtnFallback').style.display = 'inline-block';
+              }
             });
             
             console.log('📺 Sent screen to new user:', peerId);
@@ -588,7 +591,7 @@ async function loadRooms() {
   try {
     const res = await fetch('/api/rooms');
     const data = await res.json();
-    allRoomsList = data.rooms;
+    allRoomsList = data.rooms || ['room-1', 'room-2', 'room-3', 'room-4', 'room-5'];
 
     const select = document.getElementById('roomSelect');
     const adminSelect = document.getElementById('userAssignedRoomSelect');
@@ -596,12 +599,21 @@ async function loadRooms() {
     if (select) select.innerHTML = '';
     if (adminSelect) adminSelect.innerHTML = '';
 
-    data.rooms.forEach(r => {
+    allRoomsList.forEach(r => {
       if (select) select.innerHTML += `<option value="${r}">${r}</option>`;
       if (adminSelect) adminSelect.innerHTML += `<option value="${r}">${r}</option>`;
     });
   } catch (err) {
     console.error('Error fetching rooms:', err);
+    // Use default rooms
+    const defaultRooms = ['room-1', 'room-2', 'room-3', 'room-4', 'room-5'];
+    const select = document.getElementById('roomSelect');
+    if (select) {
+      select.innerHTML = '';
+      defaultRooms.forEach(r => {
+        select.innerHTML += `<option value="${r}">${r}</option>`;
+      });
+    }
   }
 }
 
@@ -611,6 +623,11 @@ async function loadAdminRoomMonitor() {
     const data = await res.json();
     const container = document.getElementById('activeRoomsList');
     container.innerHTML = '';
+
+    if (!data.rooms || data.rooms.length === 0) {
+      container.innerHTML = '<p style="color:#94a3b8;">គ្មានបន្ទប់សកម្មទេ</p>';
+      return;
+    }
 
     data.rooms.forEach(room => {
       const isLive = room.userCount > 0;
@@ -628,7 +645,10 @@ async function loadAdminRoomMonitor() {
         </div>
       `;
     });
-  } catch (err) { console.error('Error loading rooms:', err); }
+  } catch (err) { 
+    console.error('Error loading rooms:', err); 
+    document.getElementById('activeRoomsList').innerHTML = '<p style="color:#ef4444;">មានបញ្ហាក្នុងការដាក់បង្ហាញបន្ទប់</p>';
+  }
 }
 
 async function loadUsersTable() {
@@ -637,6 +657,11 @@ async function loadUsersTable() {
     const data = await res.json();
     const tbody = document.getElementById('userTableBody');
     tbody.innerHTML = '';
+
+    if (!data.users || data.users.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#94a3b8;">គ្មាន User ទេ</td></tr>';
+      return;
+    }
 
     data.users.forEach(user => {
       const isBlocked = user.isBlocked;
@@ -649,9 +674,9 @@ async function loadUsersTable() {
       } else if (user.role === 'supervisor') {
         if (currentUserRole === 'admin') {
           adminActions = `
-            <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'user')">កែ Role</button>
-            <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
-            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
+            <button class="action-btn btn-secondary" onclick="editUserRole('${user._id}', 'user')">កែ Role</button>
+            <button class="action-btn btn-secondary" onclick="editUserRoom('${user._id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
+            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user._id}', '${user.username}')">Reset Pwd</button>
           `;
         } else {
           adminActions = '<span style="color:#64748b;">មិនអាចកែប្រែបាន</span>';
@@ -659,11 +684,11 @@ async function loadUsersTable() {
       } else {
         if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
           adminActions = `
-            <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'supervisor')">កែ Role</button>
-            <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user.id}')">${isBlocked ? 'Unblock' : 'Block'}</button>
-            <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
-            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
-            ${currentUserRole === 'admin' ? `<button class="action-btn btn-danger" onclick="deleteUser('${user.id}', '${user.username}')">លុប</button>` : ''}
+            <button class="action-btn btn-secondary" onclick="editUserRole('${user._id}', 'supervisor')">កែ Role</button>
+            <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user._id}')">${isBlocked ? 'Unblock' : 'Block'}</button>
+            <button class="action-btn btn-secondary" onclick="editUserRoom('${user._id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
+            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user._id}', '${user.username}')">Reset Pwd</button>
+            ${currentUserRole === 'admin' ? `<button class="action-btn btn-danger" onclick="deleteUser('${user._id}', '${user.username}')">លុប</button>` : ''}
           `;
         }
       }
@@ -680,7 +705,10 @@ async function loadUsersTable() {
         </tr>
       `;
     });
-  } catch (err) { console.error('Error loading user table:', err); }
+  } catch (err) { 
+    console.error('Error loading user table:', err); 
+    document.getElementById('userTableBody').innerHTML = '<tr><td colspan="5" style="text-align:center; color:#ef4444;">មានបញ្ហាក្នុងការដាក់បង្ហាញ Users</td></tr>';
+  }
 }
 
 function adminJoinRoom(roomId) {
@@ -699,7 +727,9 @@ async function toggleBlockUser(id) {
     const data = await res.json();
     showToast(data.message, 'success');
     await loadUsersTable();
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការ Toggle Block!', 'error');
+  }
 }
 
 async function deleteUser(id, username) {
@@ -709,7 +739,9 @@ async function deleteUser(id, username) {
     const data = await res.json();
     showToast(data.message, 'success');
     await loadUsersTable();
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការលុប User!', 'error');
+  }
 }
 
 async function resetPassword(id, username) {
@@ -723,7 +755,9 @@ async function resetPassword(id, username) {
     });
     const data = await res.json();
     showToast(data.message, 'success');
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការប្តូរ Password!', 'error');
+  }
 }
 
 async function editUserRoom(id, currentRoom) {
@@ -738,7 +772,9 @@ async function editUserRoom(id, currentRoom) {
     const data = await res.json();
     showToast(data.message, 'success');
     await loadUsersTable();
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការប្តូរបន្ទប់!', 'error');
+  }
 }
 
 async function editUserRole(id, newRole) {
@@ -784,7 +820,9 @@ async function createNewUser() {
       await loadUsersTable();
       await loadRooms();
     }
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការបង្កើត User!', 'error');
+  }
 }
 
 async function createNewRoom() {
@@ -803,7 +841,9 @@ async function createNewRoom() {
       await loadRooms();
       if (currentUserRole === 'admin') loadAdminRoomMonitor();
     }
-  } catch (err) {}
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការបង្កើតបន្ទប់!', 'error');
+  }
 }
 
 // ============================================================
@@ -1009,7 +1049,7 @@ async function startMeeting() {
   localStream = new MediaStream([audioTrack, createActiveDummyVideoTrack()]);
   localVideo.srcObject = localStream;
 
-  // ========== FIX: USE EXTERNAL PEERSERVER WITH TURN ==========
+  // ========== USE EXTERNAL PEERSERVER WITH TURN ==========
   myPeer = new Peer(undefined, {
     host: '0.peerjs.com',
     port: 443,
@@ -1037,7 +1077,6 @@ async function startMeeting() {
     }
   });
 
-  // Debug - Log connection status
   myPeer.on('connection', (conn) => {
     console.log('🔗 Peer connection established:', conn.peer);
   });
@@ -1059,7 +1098,7 @@ async function startMeeting() {
     showToast('✅ Connected to Peer Server!', 'success');
   });
 
-  // ========== FIXED: INCOMING CALL HANDLER ==========
+  // ========== INCOMING CALL HANDLER ==========
   myPeer.on('call', (call) => {
     const callType = call.metadata ? call.metadata.type : 'camera';
     const callerName = call.metadata ? call.metadata.username : 'ដៃគូ';
@@ -1070,7 +1109,7 @@ async function startMeeting() {
     if (callType === 'screen') {
       console.log('📺 Receiving screen share from:', callerName);
       
-      // ✅ FIX: បញ្ជូន stream ត្រឡប់ទៅវិញ
+      // ✅ បញ្ជូន stream ត្រឡប់ទៅវិញ
       const answerStream = (isCameraOn && cameraStream) ? cameraStream : localStream;
       call.answer(answerStream);
       
@@ -1089,6 +1128,10 @@ async function startMeeting() {
       call.on('error', (err) => {
         console.error('📺 Screen share error:', err);
         delete screenCalls[call.peer];
+        // Show fallback button
+        if (isScreenSharing) {
+          document.getElementById('screenBtnFallback').style.display = 'inline-block';
+        }
       });
       
       screenCalls[call.peer] = call;
@@ -1099,6 +1142,7 @@ async function startMeeting() {
     call.answer(isCameraOn ? cameraStream : localStream);
     peerCalls[call.peer] = call;
     addRemoteVideo(call.peer, callerName);
+    
     call.on('stream', (remoteStream) => {
       const videoEl = document.getElementById(`video-${call.peer}`);
       if (videoEl) {
@@ -1106,10 +1150,12 @@ async function startMeeting() {
         updateConnectionStatus(call.peer, '🟢 Online');
       }
     });
+    
     call.on('close', () => {
       delete peerCalls[call.peer];
       updateConnectionStatus(call.peer, '🔴 Offline');
     });
+    
     call.on('error', (err) => {
       console.error('Camera call error:', err);
       delete peerCalls[call.peer];
@@ -1137,7 +1183,6 @@ async function startMeeting() {
       updateUserCount();
       updateChatUserList();
 
-      // ✅ ផ្ញើ screen stream ទៅកាន់ user ថ្មី
       if (isScreenSharing && screenStream) {
         setTimeout(() => {
           if (myPeer && screenStream) {
@@ -1154,6 +1199,9 @@ async function startMeeting() {
               call.on('error', (err) => {
                 console.error('Screen share error to new user:', err);
                 delete screenCalls[peerId];
+                if (isScreenSharing) {
+                  document.getElementById('screenBtnFallback').style.display = 'inline-block';
+                }
               });
               
               console.log('📺 Sent screen to new user:', peerId);
@@ -1181,7 +1229,6 @@ function connectToUser(peerId) {
   if (peerCalls[peerId]) return;
   const streamToSend = (isCameraOn && cameraStream) ? cameraStream : localStream;
   try {
-    // Call for camera
     const call = myPeer.call(peerId, streamToSend, { metadata: { type: 'camera', username: myUsername } });
     peerCalls[peerId] = call;
     updateConnectionStatus(peerId, '⏳ Connecting...');
@@ -1202,7 +1249,6 @@ function connectToUser(peerId) {
       updateConnectionStatus(peerId, '🔴 Offline');
     });
 
-    // ✅ ប្រសិនបើកំពុង share screen, ផ្ញើ screen stream ទៅ peer នេះផងដែរ
     if (isScreenSharing && screenStream) {
       setTimeout(() => {
         try {
@@ -1218,6 +1264,9 @@ function connectToUser(peerId) {
           screenCall.on('error', (err) => {
             console.error('Screen share error to peer:', peerId, err);
             delete screenCalls[peerId];
+            if (isScreenSharing) {
+              document.getElementById('screenBtnFallback').style.display = 'inline-block';
+            }
           });
           
           console.log('📺 Sent screen to peer:', peerId);
@@ -1325,7 +1374,6 @@ async function toggleScreenShare() {
   }
   
   try {
-    // Request screen with audio
     screenStream = await navigator.mediaDevices.getDisplayMedia({
       video: {
         width: { ideal: 1920 },
@@ -1340,10 +1388,8 @@ async function toggleScreenShare() {
     document.getElementById('screenBtn').className = 'btn-danger';
     document.getElementById('screenBtnFallback').style.display = 'none';
     
-    // Display locally
     addRemoteScreenVideo('my-local-screen', screenStream, myUsername + ' (អ្នក)');
     
-    // Send to all peers
     const peerIds = Object.keys(peerCalls);
     if (peerIds.length === 0) {
       showToast('⏳ កំពុងរង់ចាំអ្នកប្រើផ្សេងទៀត...', 'info');
@@ -1371,6 +1417,7 @@ async function toggleScreenShare() {
           delete screenCalls[peerId];
           if (isScreenSharing) {
             document.getElementById('screenBtnFallback').style.display = 'inline-block';
+            showToast('⚠️ Screen Share error! Try Fallback mode.', 'warning');
           }
         });
         
@@ -1381,7 +1428,6 @@ async function toggleScreenShare() {
       }
     }
     
-    // Stop sharing when user clicks stop
     screenStream.getVideoTracks()[0].onended = () => {
       stopScreenShare();
     };
@@ -1405,7 +1451,6 @@ function stopScreenShare() {
   
   removeRemoteScreenVideo('my-local-screen');
   
-  // Close all screen calls
   for (const [peerId, call] of Object.entries(screenCalls)) {
     try {
       call.close();
@@ -1436,6 +1481,11 @@ async function toggleScreenShareFallback() {
   }
   
   try {
+    // If WebRTC screen share is active, stop it first
+    if (isScreenSharing) {
+      stopScreenShare();
+    }
+    
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: { 
         width: { ideal: 1280 },
