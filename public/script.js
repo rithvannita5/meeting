@@ -1,7 +1,51 @@
 // ============================================================
-// 1. SOCKET & PEER INITIALIZATION
+// SOCKET.IO CONNECTION - FIXED FOR RENDER
 // ============================================================
-const socket = io();
+const socket = io({
+  transports: ['polling', 'websocket'],
+  reconnection: true,
+  reconnectionAttempts: 10,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+  timeout: 60000,
+  autoConnect: true,
+  forceNew: true,
+  path: '/socket.io',
+  upgrade: true,
+  rememberUpgrade: true
+});
+
+// ============================================================
+// SOCKET EVENT HANDLERS
+// ============================================================
+socket.on('connect_error', (error) => {
+  console.log('❌ Socket.IO connection error:', error);
+  showToast('⚠️ កំពុងព្យាយាមភ្ជាប់ Server...', 'warning');
+});
+
+socket.on('connect', () => {
+  console.log('✅ Socket.IO connected successfully!');
+  showToast('✅ ភ្ជាប់ Server បានជោគជ័យ!', 'success');
+});
+
+socket.on('disconnect', (reason) => {
+  console.log('🔌 Socket.IO disconnected:', reason);
+  if (reason === 'io server disconnect') {
+    socket.connect();
+  }
+});
+
+socket.on('reconnect_attempt', (attempt) => {
+  console.log(`🔄 Reconnect attempt ${attempt}`);
+});
+
+socket.on('reconnect', (attempt) => {
+  console.log(`✅ Reconnected after ${attempt} attempts`);
+});
+
+// ============================================================
+// 1. PEER & STREAM VARIABLES
+// ============================================================
 let myPeer;
 let myId = '';
 let myUsername = '';
