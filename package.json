@@ -1,9 +1,6 @@
 {
   "name": "video-conference",
   "version": "1.0.0",
-  "private": true,
-  "description": "Video Conference with PeerJS and Socket.IO",
-  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
