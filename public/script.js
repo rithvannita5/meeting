@@ -52,9 +52,10 @@ let remotePointer = null;
 // SOCKET CONNECTION FUNCTION - FIXED
 // ============================================================
 function connectSocket() {
-  // កែប្រែត្រង់នេះ៖ ឲ្យវាចាប់ផ្តើមពី polling ជាមុន ហើយដក forceNew/path ដែលមិនចាំបាច់ចេញ
+  // បង្កើត Socket.IO ដោយប្រើប្រាស់ត្រឹម polling និងបិទ upgrade
   socket = io({
-    transports: ['polling', 'websocket'], // ប្រើ polling មុន រួច Socket.IO នឹង upgrade ទៅ websocket ដោយស្វ័យប្រវត្តិ
+    transports: ['polling'], // ប្រើតែ polling ដើម្បីកាត់បន្ថយ Error លើ Render Proxy
+    upgrade: false,          // បិទមិនឱ្យវាព្យាយាម upgrade ទៅ websocket
     reconnection: true,
     reconnectionAttempts: 10,
     reconnectionDelay: 1000,
@@ -81,39 +82,43 @@ function connectSocket() {
     }
   });
 
-  socket.on('connect', function() {
-    console.log('✅ Socket.IO connected successfully!');
-    socketConnected = true;
-    connectionAttempts = 0;
-    showToast('✅ ភ្ជាប់ Server បានជោគជ័យ!', 'success');
-    
-    // ប្រសិនបើមាន Peer ID ហើយ សូមចូលបន្ទប់ឡើងវិញ
-    if (myId && currentRoomId && myUsername) {
-      socket.emit('join-room', {
-        roomId: currentRoomId,
-        peerId: myId,
-        username: myUsername
-      });
-    }
-  });
-
   socket.on('disconnect', function(reason) {
     console.log('🔌 Socket.IO disconnected:', reason);
     socketConnected = false;
   });
 
-  socket.on('reconnect', function() {
-    console.log('✅ Reconnected');
-    socketConnected = true;
-    // ចូលបន្ទប់ឡើងវិញ
-    if (myId && currentRoomId && myUsername) {
-      socket.emit('join-room', {
-        roomId: currentRoomId,
-        peerId: myId,
-        username: myUsername
+  // ========== Socket Events ==========
+  socket.on('room-joined', function(data) {
+    console.log('🏠 Joined room:', data.roomId);
+    if (data.existingUsers) {
+      data.existingUsers.forEach(user => {
+        if (user.peerId !== myId) {
+          connectToNewUser(user.peerId, user.username);
+        }
       });
     }
   });
+
+  socket.on('user-joined', function(data) {
+    console.log('👤 User joined:', data.username);
+    showToast(`👤 ${data.username} បានចូលក្នុងបន្ទប់!`, 'info');
+  });
+
+  socket.on('user-left', function(data) {
+    const peerId = (typeof data === 'object') ? data.peerId : data;
+    console.log('👋 User left:', peerId);
+    if (peers[peerId]) {
+      peers[peerId].close();
+      delete peers[peerId];
+    }
+    removeVideoElement(peerId);
+  });
+
+  socket.on('receive-private-message', function(data) {
+    console.log('💬 Private message:', data);
+    displayPrivateMessage(data.fromUsername, data.message);
+  });
+}
 
   // ============================================================
   // ROOM EVENTS - FIXED
