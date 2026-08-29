@@ -49,7 +49,6 @@
     .screen-box video { object-fit: contain; }
 
     .name-tag { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #fff; padding: 5px 10px; border-radius: 6px; font-size: 12px; z-index: 5; }
-    .status-tag { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 6px; font-size: 11px; z-index: 5; }
     
     .floating-controls { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 50; background: rgba(0,0,0,0.7); padding: 8px 18px; border-radius: 30px; }
     .float-btn { background: #334155; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
@@ -67,7 +66,6 @@
     .chat-user-list { width: 150px; background: #0f0f23; overflow-y: auto; border-right: 1px solid #2d2d44; flex-shrink: 0; }
     .chat-user-item { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #1a1a3e; display: flex; align-items: center; gap: 10px; transition: background 0.2s; position: relative; }
     .chat-user-item:hover { background: #1a1a3e; }
-    .chat-user-item.active { background: #1a3a5e; }
     .chat-messages-container { flex: 1; display: none; flex-direction: column; background: #12122a; }
     .chat-messages-container.show { display: flex !important; }
     .chat-messages-container .chat-title { padding: 10px 16px; background: #16213e; border-bottom: 1px solid #2d2d44; color: #e0e0e0; font-size: 14px; font-weight: 500; flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
@@ -96,11 +94,11 @@
 
     /* ADMIN DASHBOARD */
     #admin-dashboard { width: 100%; max-width: 1200px; justify-content: flex-start; align-items: flex-start; min-height: 95vh; }
-    .admin-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; }
+    .admin-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; width: 100%; }
     .nav-tabs { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
     .tab-btn { background: #1c2541; color: #fff; padding: 12px 18px; }
     .tab-btn.active { background: #00b4d8; }
-    .tab-content { background: #1c2541; padding: 25px; border-radius: 12px; overflow-x: auto; }
+    .tab-content { background: #1c2541; padding: 25px; border-radius: 12px; overflow-x: auto; width: 100%; }
     table { width: 100%; border-collapse: collapse; margin-top: 15px; min-width: 600px; }
     th, td { padding: 12px; text-align: left; border-bottom: 1px solid #334155; }
     th { background: #0b132b; color: #48cae4; }
@@ -120,7 +118,7 @@
     <h2>🚪 ចូលបន្ទប់ Meeting</h2>
     <div class="form-group">
       <label>ឈ្មោះគណនី (Username)</label>
-      <input type="text" id="username" placeholder="ឧ. admin, rith...">
+      <input type="text" id="username" placeholder="ឧ. admin, user1...">
     </div>
     <div class="form-group">
       <label>លេខសម្ងាត់ (Password)</label>
@@ -154,7 +152,6 @@
     <div class="nav-tabs">
       <button id="tabBtnRooms" class="tab-btn active" onclick="switchAdminTab('rooms')">📡 តាមដានបន្ទប់សកម្ម</button>
       <button id="tabBtnUsers" class="tab-btn" onclick="switchAdminTab('users')">👥 គ្រប់គ្រង Users</button>
-      <button id="tabBtnNewRoom" class="tab-btn" onclick="switchAdminTab('newRoom')" style="display:none;">➕ បង្កើតបន្ទប់ / User</button>
     </div>
     <div class="tab-content">
       <div id="tab-rooms" class="tab-pane active">
@@ -163,27 +160,10 @@
       <div id="tab-users" class="tab-pane hidden">
         <table>
           <thead>
-            <tr><th>Username</th><th>Role</th><th>បន្ទប់កំណត់</th><th>ស្ថានភាព</th><th>សកម្មភាព</th></tr>
+            <tr><th>Username</th><th>Role</th><th>បន្ទប់អនុញ្ញាត</th></tr>
           </thead>
           <tbody id="userTableBody"></tbody>
         </table>
-      </div>
-      <div id="tab-newRoom" class="tab-pane hidden">
-        <div style="display:flex; gap:30px; flex-wrap:wrap;">
-          <div style="flex:1; min-width:280px;">
-            <h3>➕ បង្កើត User ថ្មី</h3>
-            <div class="form-group" style="margin-top:10px;"><input type="text" id="newUsername" placeholder="Username"></div>
-            <div class="form-group"><input type="password" id="newPassword" placeholder="Password"></div>
-            <div class="form-group"><select id="userAssignedRoomSelect"></select></div>
-            <div class="form-group"><select id="newUserRoleSelect"><option value="user">User</option><option value="supervisor">Supervisor</option></select></div>
-            <button class="btn-success" onclick="createNewUser()">បង្កើត User</button>
-          </div>
-          <div style="flex:1; min-width:280px;">
-            <h3>➕ បង្កើតបន្ទប់ថ្មី</h3>
-            <div class="form-group" style="margin-top:10px;"><input type="text" id="newRoomId" placeholder="ឧ. room-3"></div>
-            <button class="btn-primary" onclick="createNewRoom()">បង្កើតបន្ទប់</button>
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -198,7 +178,6 @@
           <span id="chatBadgeCount" class="badge-count" style="display:none;">0</span>
         </button>
         <button id="screenBtn" class="btn-warning" onclick="toggleScreenShare()">🖥️ Share Screen</button>
-        <button class="btn-secondary" onclick="changeMyPassword()">🔑 ប្តូរ Password</button>
         <button class="btn-danger" onclick="leaveRoom()">🚪 ចាកចេញពីបន្ទប់</button>
       </div>
     </div>
