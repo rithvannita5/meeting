@@ -1,5 +1,5 @@
 // ============================================================
-// SOCKET.IO CONNECTION - FIXED
+// SOCKET.IO CONNECTION
 // ============================================================
 let socket = null;
 let socketConnected = false;
@@ -48,19 +48,8 @@ let remoteControlRequestId = null;
 let isBeingControlled = false;
 let remotePointer = null;
 
-// ✅ FIX: TURN server list defined once so it can be reused / extended easily.
-// openrelay.metered.ca is a free shared TURN server and can be unreliable when
-// two peers are on very different networks (mobile data vs office firewall,
-// different countries, etc). If screen share keeps showing a black box for
-// specific network combinations, replace/add credentials from your own TURN
-// provider (e.g. Metered.ca free tier, Cloudflare Calls TURN, Twilio NTS).
-// ✅ FIX: local base list kept as a fallback. If /api/turn-credentials
-// returns real Cloudflare TURN servers (see server.js), they are merged in
-// front of this list at startup — see fetchTurnCredentials() /
-// initPeerJS() below. openrelay.metered.ca is kept only as an extra
-// fallback; the console log showed it is NOT producing "relay" candidates
-// for these users' networks right now, so don't rely on it alone.
-let ICE_SERVERS = [
+// ✅ FIX: បន្ថែម TURN servers បន្ថែមសម្រាប់ប្រសិទ្ធភាពឆ្លង Network
+const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
@@ -83,28 +72,8 @@ let ICE_SERVERS = [
   }
 ];
 
-// Fetches short-lived TURN credentials from our own server (which in turn
-// asks Cloudflare Realtime, if TURN_KEY_ID/TURN_KEY_API_TOKEN are set on
-// Render). Merges them to the FRONT of ICE_SERVERS so they're tried first.
-// Safe no-op if the endpoint/env vars aren't configured.
-async function fetchTurnCredentials() {
-  try {
-    const res = await fetch('/api/turn-credentials');
-    const data = await res.json();
-    if (data && data.iceServers) {
-      const cfServers = Array.isArray(data.iceServers) ? data.iceServers : [data.iceServers];
-      console.log('✅ Loaded TURN credentials from Cloudflare Realtime:', cfServers.length, 'entries');
-      ICE_SERVERS = [...cfServers, ...ICE_SERVERS];
-    } else {
-      console.log('ℹ️ No dynamic TURN credentials configured (TURN_KEY_ID/TURN_KEY_API_TOKEN not set on server) — using static fallback list only.');
-    }
-  } catch (err) {
-    console.log('⚠️ Could not fetch TURN credentials, using static fallback list:', err);
-  }
-}
-
 // ============================================================
-// SOCKET CONNECTION FUNCTION - FIXED
+// SOCKET CONNECTION FUNCTION
 // ============================================================
 function connectSocket() {
   socket = io({
@@ -156,6 +125,7 @@ function connectSocket() {
       }, 2000);
     }
   });
+
   // ========== Socket Events ==========
   socket.on('room-joined', function(data) {
     console.log('🏠 Joined room:', data.roomId);
@@ -185,17 +155,10 @@ function connectSocket() {
       updateUserCount();
       updateChatUserList();
       playNotificationSound('join');
-
-      // ✅ FIX: don't also call the newcomer here. The newcomer already
-      // calls every existing user from the 'room-joined' handler, and a
-      // PeerJS call is full-duplex (call.answer(localStream) sends media
-      // back on the SAME connection) — so a single call covers both
-      // directions. Calling from both sides created two separate
-      // RTCPeerConnections per pair, which doubled ICE/TURN load and
-      // caused the srcObject/play() race ("play() request was interrupted
-      // by a new load request") visible in the console, plus extra
-      // 'disconnected' ICE flapping. We just wait for their incoming call
-      // (handled in myPeer.on('call')) instead.
+      
+      setTimeout(function() {
+        connectToUser(peerId);
+      }, 500);
 
       if (isScreenSharing && screenStream && myPeer) {
         setTimeout(function() {
@@ -671,91 +634,19 @@ function showChatNotification(username, message, peerId) {
 // PEERJS & WEBRTC FUNCTIONS
 // ============================================================
 
-// ✅ FIX: helper to log ICE connection state per-call, so black-screen /
-// cross-network failures show up clearly in the browser console instead of
-// failing silently.
-//
-// NOTE on 'disconnected' vs 'failed': WebRTC's ICE layer treats a momentary
-// network hiccup, keepalive miss, or Wi-Fi/4G handoff as 'disconnected' —
-// this is normal and the browser retries connectivity checks automatically
-// for ~20-30s before giving up. Only 'failed' means the candidates genuinely
-// could not find a path (almost always a TURN relay problem) and needs a
-// user-facing warning + an ICE restart attempt.
 function attachIceDiagnostics(call, peerId, label) {
   if (!call || !call.peerConnection) return;
-  const pc = call.peerConnection;
-  let disconnectedTimer = null;
-
-  // Log every local candidate as it's gathered — this tells us directly
-  // whether a TURN "relay" candidate was ever produced. If you only ever
-  // see "host" / "srflx" candidates and no "relay" one, the TURN servers
-  // in ICE_SERVERS are not reachable/working and that's the root cause.
-  pc.onicecandidate = function(evt) {
-    if (evt.candidate) {
-      const c = evt.candidate;
-      console.log(`🧊 [${label}] local candidate (${peerId}):`, c.type, c.protocol, c.address || c.candidate);
-    } else {
-      console.log(`🧊 [${label}] candidate gathering complete for ${peerId}`);
-    }
-  };
-
-  pc.oniceconnectionstatechange = function() {
-    const state = pc.iceConnectionState;
+  call.peerConnection.oniceconnectionstatechange = function() {
+    const state = call.peerConnection.iceConnectionState;
     console.log(`🧊 [${label}] ICE state with ${peerId}:`, state);
-
-    if (state === 'connected' || state === 'completed') {
-      if (disconnectedTimer) { clearTimeout(disconnectedTimer); disconnectedTimer = null; }
-      // Log which candidate pair actually won, so we can see host/srflx/relay.
-      pc.getStats(null).then(stats => {
-        stats.forEach(report => {
-          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-            const local = stats.get(report.localCandidateId);
-            const remote = stats.get(report.remoteCandidateId);
-            if (local) console.log(`✅ [${label}] active LOCAL candidate (${peerId}):`, local.candidateType, local.protocol);
-            if (remote) console.log(`✅ [${label}] active REMOTE candidate (${peerId}):`, remote.candidateType, remote.protocol);
-          }
-        });
-      }).catch(() => {});
-    }
-
-    if (state === 'disconnected') {
-      // Give it ~15s to self-heal before treating it as a real failure.
-      if (disconnectedTimer) clearTimeout(disconnectedTimer);
-      disconnectedTimer = setTimeout(function() {
-        if (pc.iceConnectionState === 'disconnected') {
-          console.log(`⚠️ [${label}] still disconnected after 15s with ${peerId}, attempting ICE restart`);
-          if (typeof pc.restartIce === 'function') pc.restartIce();
-        }
-      }, 15000);
-    }
-
     if (state === 'failed') {
-      console.log(`❌ [${label}] ICE FAILED with ${peerId} — TURN relay ប្រហែលមិនដំណើរការ ឬបណ្តាញរឹតបន្តឹងពេក`);
+      console.log(`❌ [${label}] ICE FAILED with ${peerId}`);
       showToast('⚠️ ការតភ្ជាប់ជាមួយអ្នកប្រើម្នាក់មានបញ្ហា (Network)', 'warning');
-      if (typeof pc.restartIce === 'function') {
-        console.log(`🔄 [${label}] attempting ICE restart with ${peerId}`);
-        pc.restartIce();
-      }
     }
   };
 }
 
-async function initPeerJS() {
-  // ✅ FIX: get the freshest ICE server list (Cloudflare TURN if configured)
-  // before opening the peer connection, so the very first call already has
-  // working relay candidates instead of retrying after failing once.
-  await fetchTurnCredentials();
-
-  // ✅ FIX (root cause of "screen share not showing" + "network problem" toast):
-  // Previously `new Peer(undefined, {...})` had no host/path, so the PeerJS
-  // client fell back to the PUBLIC PeerJS cloud broker (0.peerjs.com) for
-  // signaling — completely ignoring the PeerServer you already run on Render
-  // at app.use('/peerjs', peerServer). The public broker is not meant for
-  // production, is rate-limited, and is frequently slow/unreachable from
-  // cloud hosts like Render — so myPeer.on('open') never fires reliably,
-  // 'join-room' never gets sent with a real peerId, and calls (incl. the
-  // screen-share call) silently never connect. Pointing the client at your
-  // own Render-hosted PeerServer fixes signaling reliability.
+function initPeerJS() {
   const isSecure = window.location.protocol === 'https:';
   myPeer = new Peer(undefined, {
     host: window.location.hostname,
@@ -832,7 +723,15 @@ async function initPeerJS() {
   myPeer.on('disconnected', function() {
     console.log('🔌 PeerJS signaling disconnected, reconnecting...');
     if (myPeer && !myPeer.destroyed) {
-      try { myPeer.reconnect(); } catch (e) { console.log('Reconnect failed:', e); }
+      try { 
+        myPeer.reconnect(); 
+      } catch (e) { 
+        console.log('Reconnect failed:', e);
+        setTimeout(function() {
+          if (myPeer) myPeer.destroy();
+          initPeerJS();
+        }, 3000);
+      }
     }
   });
 }
@@ -923,13 +822,7 @@ function addRemoteVideo(peerId, username) {
 function attachRemoteStream(peerId, stream) {
   const videoElem = document.getElementById('stream-' + peerId);
   if (videoElem) {
-    // ✅ FIX: guard against re-assigning the same stream (e.g. the
-    // 'stream' event firing more than once for one call), which was
-    // interrupting the previous play() request with an AbortError.
-    if (videoElem.srcObject === stream) return;
     videoElem.srcObject = stream;
-    // ✅ FIX: explicitly call play() and catch autoplay-block errors instead
-    // of failing silently (would otherwise show a frozen/black frame).
     const playPromise = videoElem.play();
     if (playPromise && playPromise.catch) {
       playPromise.catch(function(err) {
@@ -954,10 +847,6 @@ function addRemoteScreenVideo(peerId, stream, username) {
   const video = document.createElement('video');
   video.autoplay = true;
   video.playsInline = true;
-  // ✅ FIX: screen-share streams normally carry no audio track, so muting is
-  // safe and required — most browsers (esp. Chrome) block autoplay of
-  // non-muted <video> elements without a prior user gesture, which is the
-  // main reason the tile showed a black box instead of the shared screen.
   video.muted = true;
   video.srcObject = stream;
 
@@ -1047,23 +936,57 @@ async function toggleScreenShare() {
     }
     isScreenSharing = false;
     showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
+    // ✅ FIX: លុប screen stream ចេញពី grid
+    const screenGridElem = document.getElementById('screenGrid');
+    if (screenGridElem) screenGridElem.innerHTML = '';
+    const screenTitle = document.getElementById('screenTitle');
+    if (screenTitle) screenTitle.style.display = 'none';
   } else {
     try {
       screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       isScreenSharing = true;
       
+      // ✅ FIX: ផ្ញើ screen stream ទៅកាន់អ្នកប្រើទាំងអស់
       Object.keys(userNamesMap).forEach(peerId => {
         if (peerId !== myId && myPeer) {
           const call = myPeer.call(peerId, screenStream, {
             metadata: { type: 'screen', username: myUsername }
           });
           attachIceDiagnostics(call, peerId, 'screen (outgoing)');
+          peerCalls[peerId] = call;
         }
       });
       
+      // ✅ FIX: បង្ហាញ screen stream នៅលើ local
+      const screenTitle = document.getElementById('screenTitle');
+      if (screenTitle) screenTitle.style.display = 'block';
+      
+      // ✅ FIX: បង្កើត video element សម្រាប់ local screen share
+      const existingLocalScreen = document.getElementById('local-screen');
+      if (existingLocalScreen) existingLocalScreen.remove();
+      
+      const localScreenCard = document.createElement('div');
+      localScreenCard.className = 'video-box screen-box';
+      localScreenCard.id = 'local-screen';
+      
+      const localScreenVideo = document.createElement('video');
+      localScreenVideo.autoplay = true;
+      localScreenVideo.playsInline = true;
+      localScreenVideo.muted = true;
+      localScreenVideo.srcObject = screenStream;
+      
+      const label = document.createElement('div');
+      label.className = 'name-tag';
+      label.textContent = '🖥️ Screen: ' + myUsername + ' (អ្នក)';
+      
+      localScreenCard.appendChild(localScreenVideo);
+      localScreenCard.appendChild(label);
+      
+      const screenGridElem = document.getElementById('screenGrid');
+      if (screenGridElem) screenGridElem.appendChild(localScreenCard);
+      
       screenStream.getVideoTracks()[0].onended = () => {
-        isScreenSharing = false;
-        showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
+        toggleScreenShare();
       };
       
       showToast('🖥️ កំពុងចែករំលែកអេក្រង់...', 'success');
@@ -1528,6 +1451,14 @@ async function loadRooms() {
         select.innerHTML += '<option value="' + r + '">' + r + '</option>';
       });
     }
+    // ✅ FIX: Update user assigned room select as well
+    var userRoomSelect = document.getElementById('userAssignedRoomSelect');
+    if (userRoomSelect) {
+      userRoomSelect.innerHTML = '';
+      data.rooms.forEach(function(r) {
+        userRoomSelect.innerHTML += '<option value="' + r + '">' + r + '</option>';
+      });
+    }
   } catch (err) {}
 }
 
@@ -1608,10 +1539,75 @@ async function resetPassword(id, username) {
   showToast(data.message, 'success');
 }
 
+async function createNewUser() {
+  var username = document.getElementById('newUsername').value.trim();
+  var password = document.getElementById('newPassword').value.trim();
+  var assignedRoom = document.getElementById('userAssignedRoomSelect').value;
+  var role = document.getElementById('newUserRoleSelect').value;
+
+  if (!username || !password) {
+    showToast('សូមបំពេញ Username និង Password!', 'error');
+    return;
+  }
+
+  try {
+    var res = await fetch('/api/create-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, assignedRoom, role })
+    });
+    var data = await res.json();
+    if (data.success) {
+      showToast(data.message, 'success');
+      document.getElementById('newUsername').value = '';
+      document.getElementById('newPassword').value = '';
+      loadUsersTable();
+    } else {
+      showToast(data.message, 'error');
+    }
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការបង្កើត User!', 'error');
+  }
+}
+
+async function createNewRoom() {
+  var roomId = document.getElementById('newRoomId').value.trim();
+  if (!roomId) {
+    showToast('សូមបញ្ចូលឈ្មោះបន្ទប់!', 'error');
+    return;
+  }
+
+  try {
+    var res = await fetch('/api/create-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId })
+    });
+    var data = await res.json();
+    if (data.success) {
+      showToast(data.message, 'success');
+      document.getElementById('newRoomId').value = '';
+      loadRooms();
+      loadAdminRoomMonitor();
+    } else {
+      showToast(data.message, 'error');
+    }
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការបង្កើតបន្ទប់!', 'error');
+  }
+}
+
 // ============================================================
 // APP INITIALIZATION
 // ============================================================
 window.addEventListener('DOMContentLoaded', function() {
   connectSocket();
   loadRooms();
+  
+  // ✅ FIX: Add enter key support for chat
+  document.getElementById('chatInput').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+      sendPrivateMessage();
+    }
+  });
 });
