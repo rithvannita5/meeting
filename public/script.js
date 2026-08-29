@@ -783,18 +783,37 @@ function updateStreamToAllPeers(stream) {
   if (!stream) return;
   
   const videoTrack = stream.getVideoTracks()[0];
-  if (!videoTrack) return;
+  const audioTrack = stream.getAudioTracks()[0];
   
   Object.keys(peerCalls).forEach(peerId => {
     const call = peerCalls[peerId];
     if (call && call.peerConnection) {
       const senders = call.peerConnection.getSenders();
-      const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-      if (videoSender) {
-        videoSender.replaceTrack(videoTrack);
-        console.log(`✅ Updated video track for peer: ${peerId}`);
-      } else {
-        console.log(`⚠️ No video sender found for peer ${peerId} — call may be missing a video track`);
+
+      // ✅ FIX: previously only the VIDEO sender's track was ever replaced.
+      // The AUDIO sender kept sending the original dummy stream's disabled
+      // (silent) oscillator track forever — even after the camera/mic
+      // stream replaced localStream — so nobody could ever hear you talk
+      // once you switched from the dummy stream to your real camera+mic.
+      // Both tracks must be replaced together whenever localStream changes.
+      if (videoTrack) {
+        const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+        if (videoSender) {
+          videoSender.replaceTrack(videoTrack);
+          console.log(`✅ Updated video track for peer: ${peerId}`);
+        } else {
+          console.log(`⚠️ No video sender found for peer ${peerId}`);
+        }
+      }
+
+      if (audioTrack) {
+        const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+        if (audioSender) {
+          audioSender.replaceTrack(audioTrack);
+          console.log(`✅ Updated audio track for peer: ${peerId}`);
+        } else {
+          console.log(`⚠️ No audio sender found for peer ${peerId}`);
+        }
       }
     }
   });
@@ -1213,22 +1232,30 @@ function updateScreenShareButtonUI() {
   // matching the inline onclick="toggleScreenShare()" pattern used elsewhere
   // in this app (e.g. onclick="adminJoinRoom(...)").
   const btn = document.querySelector('[onclick*="toggleScreenShare"]');
-  if (!btn) return;
+  if (!btn) {
+    console.log('⚠️ Share-screen button not found (no element with onclick="toggleScreenShare()")');
+    return;
+  }
 
   if (!btn.dataset.origHtml) {
     btn.dataset.origHtml = btn.innerHTML;
   }
-  if (!btn.dataset.origBg) {
-    btn.dataset.origBg = btn.style.background || '';
-  }
 
   if (isScreenSharing) {
     btn.innerHTML = '⏹️ បិទ Share Screen';
-    btn.style.background = '#ef4444';
+    // !important + setProperty guarantees this beats any CSS class the
+    // button already has (e.g. btn-success), so it reliably turns red.
+    btn.style.setProperty('background', '#ef4444', 'important');
+    btn.style.setProperty('background-color', '#ef4444', 'important');
+    btn.style.setProperty('color', '#fff', 'important');
     btn.classList.add('sharing-active');
   } else {
     btn.innerHTML = btn.dataset.origHtml;
-    btn.style.background = '#F59E0B';
+    // Fully remove our inline overrides so the button falls back to
+    // whatever its original CSS class/stylesheet defines.
+    btn.style.removeProperty('background');
+    btn.style.removeProperty('background-color');
+    btn.style.removeProperty('color');
     btn.classList.remove('sharing-active');
   }
 }
