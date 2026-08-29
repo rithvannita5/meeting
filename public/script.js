@@ -52,27 +52,32 @@ let remotePointer = null;
 // SOCKET CONNECTION FUNCTION - FIXED
 // ============================================================
 function connectSocket() {
-  // ប្រើ WebSocket ជំនួស Polling
+  // កែប្រែត្រង់នេះ៖ ឲ្យវាចាប់ផ្តើមពី polling ជាមុន ហើយដក forceNew/path ដែលមិនចាំបាច់ចេញ
   socket = io({
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'], // ប្រើ polling មុន រួច Socket.IO នឹង upgrade ទៅ websocket ដោយស្វ័យប្រវត្តិ
     reconnection: true,
     reconnectionAttempts: 10,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
-    timeout: 30000,
-    autoConnect: true,
-    forceNew: true,
-    path: '/socket.io'
+    timeout: 30000
   });
 
   socket.on('connect_error', function(error) {
     console.log('❌ Socket.IO connection error:', error);
-    connectionAttempts++;
+  });
+
+  socket.on('connect', function() {
+    console.log('✅ Socket.IO connected successfully!');
+    socketConnected = true;
+    connectionAttempts = 0;
+    showToast('✅ ភ្ជាប់ Server បានជោគជ័យ!', 'success');
     
-    if (connectionAttempts > 3) {
-      // សាកល្បងប្រើ Polling
-      socket.io.opts.transports = ['polling'];
-      socket.connect();
+    if (myId && currentRoomId && myUsername) {
+      socket.emit('join-room', {
+        roomId: currentRoomId,
+        peerId: myId,
+        username: myUsername
+      });
     }
   });
 
