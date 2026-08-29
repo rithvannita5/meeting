@@ -683,19 +683,59 @@ function updateStreamToAllPeers(stream) {
   if (!stream) return;
   
   const videoTrack = stream.getVideoTracks()[0];
-  if (!videoTrack) return;
+  if (!videoTrack) {
+    console.log('⚠️ No video track found in stream');
+    return;
+  }
+  
+  console.log('📤 Updating video track to all peers...');
   
   Object.keys(peerCalls).forEach(peerId => {
     const call = peerCalls[peerId];
     if (call && call.peerConnection) {
+      try {
+        const senders = call.peerConnection.getSenders();
+        const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+        if (videoSender) {
+          videoSender.replaceTrack(videoTrack);
+          console.log(`✅ Updated video track for peer: ${peerId}`);
+        } else {
+          // ប្រសិនបើគ្មាន video sender បង្កើតថ្មី
+          console.log(`⚠️ No video sender found for peer: ${peerId}, adding new track`);
+          call.peerConnection.addTrack(videoTrack, stream);
+        }
+      } catch (error) {
+        console.error(`❌ Error updating track for peer ${peerId}:`, error);
+      }
+    }
+  });
+}
+
+// ============================================================
+// UPDATE STREAM TO SPECIFIC PEER - FIXED
+// ============================================================
+function updateStreamToPeer(stream, peerId) {
+  if (!stream || !peerId) return;
+  
+  const videoTrack = stream.getVideoTracks()[0];
+  if (!videoTrack) return;
+  
+  const call = peerCalls[peerId];
+  if (call && call.peerConnection) {
+    try {
       const senders = call.peerConnection.getSenders();
       const videoSender = senders.find(s => s.track && s.track.kind === 'video');
       if (videoSender) {
         videoSender.replaceTrack(videoTrack);
-        console.log(`✅ Updated video track for peer: ${peerId}`);
+        console.log(`✅ Updated video track to peer: ${peerId}`);
+      } else {
+        call.peerConnection.addTrack(videoTrack, stream);
+        console.log(`✅ Added new video track to peer: ${peerId}`);
       }
+    } catch (error) {
+      console.error(`❌ Error updating track for peer ${peerId}:`, error);
     }
-  });
+  }
 }
 
 // ============================================================
@@ -748,7 +788,7 @@ function initPeerJS() {
         initDummyStream();
       }
       
-      // ✅ FIX: Answer with current localStream
+      // Answer with current localStream
       call.answer(localStream);
 
       const type = (call.metadata && call.metadata.type) || 'video';
@@ -833,6 +873,13 @@ function connectToUser(peerId) {
   });
 
   peerCalls[peerId] = call;
+  
+  // ✅ FIX: បញ្ជូន localStream បច្ចុប្បន្នទៅកាន់អ្នកប្រើថ្មី
+  if (localStream) {
+    setTimeout(function() {
+      updateStreamToPeer(localStream, peerId);
+    }, 1000);
+  }
 }
 
 // ============================================================
@@ -867,6 +914,7 @@ function initDummyStream() {
 
   const newStream = new MediaStream([canvasStream.getVideoTracks()[0], audioTrack]);
   
+  // ✅ FIX: បើ localStream មានរួចហើយ បញ្ជូនទៅអ្នកដទៃ
   if (localStream) {
     localStream = newStream;
     if (localVideo) localVideo.srcObject = localStream;
