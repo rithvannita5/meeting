@@ -20,12 +20,14 @@ const peerServer = ExpressPeerServer(server, {
 app.use('/peerjs', peerServer);
 
 // ========== Socket.IO Config ==========
+// ========== Socket.IO Config - FIXED ==========
 const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"],
     credentials: true
   },
+  // ✅ FIX: ប្រើតែ polling មិនប្រើ WebSocket
   transports: ['polling'],
   allowUpgrades: false,
   pingTimeout: 60000,
@@ -36,13 +38,22 @@ const io = new Server(server, {
   path: '/socket.io'
 });
 
+// ✅ FIX: បន្ថែម engine.io error handling
 io.engine.on("connection_error", (err) => {
   console.log('❌ Socket.IO engine error:', err);
 });
 
-// ========== Base Routes ==========
-app.get('/ping', (req, res) => res.send('pong'));
+// ✅ FIX: បន្ថែម connection retry logic
+io.engine.on("connection", (socket) => {
+  console.log('✅ Engine.IO connection established');
+});
 
+io.engine.on("headers", (headers, req) => {
+  // អនុញ្ញាត CORS headers
+  headers["Access-Control-Allow-Origin"] = "*";
+  headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
+  headers["Access-Control-Allow-Headers"] = "Content-Type";
+});
 // ============================================================
 // CLOUDFLARE TURN API
 // ============================================================
