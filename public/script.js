@@ -119,6 +119,85 @@ function connectSocket() {
     }
   });
 
+  // Function សម្រាប់ចាកចេញពីបន្ទប់ (កែសម្រួលឱ្យដើរ ១០០%)
+function leaveRoom() {
+  if (!confirm('តើអ្នកប្រាកដជាចង់ចាកចេញពីបន្ទប់នេះទេ?')) return;
+
+  // ១. បិទ Stream កាមេរ៉ា និង Screen Share ទាំងអស់
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(track => track.stop());
+    cameraStream = null;
+  }
+  if (screenStream) {
+    screenStream.getTracks().forEach(track => track.stop());
+    screenStream = null;
+  }
+
+  // ២. បិទការតភ្ជាប់ PeerJS ទាំងអស់
+  if (peerCalls) {
+    Object.keys(peerCalls).forEach(peerId => {
+      if (peerCalls[peerId]) peerCalls[peerId].close();
+    });
+  }
+  if (myPeer) {
+    myPeer.destroy();
+    myPeer = null;
+  }
+
+  // ៣. ផ្ញើសារប្រាប់ Server ថាចាកចេញពីបន្ទប់
+  if (socket && socketConnected) {
+    socket.emit('leave-room', { roomId: currentRoomId, peerId: myId });
+  }
+
+  // ៤. សម្អាត HTML Grid កាមេរ៉ា និង Screen Share
+  const videoGrid = document.getElementById('videoGrid');
+  const screenGrid = document.getElementById('screenGrid');
+  if (videoGrid) {
+    // រក្សាទុកតែ Local Video Box
+    const myVideo = document.getElementById('myVideoContainer');
+    videoGrid.innerHTML = '';
+    if (myVideo) videoGrid.appendChild(myVideo);
+  }
+  if (screenGrid) screenGrid.innerHTML = '';
+
+  // ៥. លាក់ Room UI & Chat Panel
+  const roomContainer = document.getElementById('room-container');
+  const chatPanel = document.getElementById('chat-panel');
+  if (roomContainer) {
+    roomContainer.classList.add('hidden');
+    roomContainer.style.display = 'none';
+  }
+  if (chatPanel) chatPanel.classList.add('hidden');
+
+  // ៦. កែសម្រួល body style ឱ្យត្រឡប់មកទម្រង់ Login វិញ (រំកិល Form មកចំកណ្តាល)
+  const mainBody = document.getElementById('mainBody');
+  if (mainBody) {
+    mainBody.style.justifyContent = 'center';
+    mainBody.style.alignItems = 'center';
+  }
+
+  // ៧. ប្រសិនបើជា Admin ឱ្យត្រឡប់ទៅ Admin Dashboard វិញ បើមិនមែនទេទៅ Login Form
+  if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
+    const adminDash = document.getElementById('admin-dashboard');
+    if (adminDash) adminDash.classList.remove('hidden');
+    if (typeof switchAdminTab === 'function') switchAdminTab('rooms');
+  } else {
+    const authCard = document.getElementById('auth');
+    if (authCard) authCard.classList.remove('hidden');
+  }
+
+  showToast('🚪 បានចាកចេញពីបន្ទប់រៀបរយ!', 'warning');
+}
+
+// ប្រសិនបើក្នុងកូដមានហៅ leaveMeeting() ឱ្យវាដំណើរការ leaveRoom() ដូចគ្នា
+function leaveMeeting() {
+  leaveRoom();
+}
+  
   // ============================================================
   // SOUND NOTIFICATION
   // ============================================================
