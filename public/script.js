@@ -59,11 +59,21 @@ function connectSocket() {
     reconnectionAttempts: 10,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
-    timeout: 30000
+    timeout: 60000,
+    forceNew: true,
+    path: '/socket.io'
   });
 
   socket.on('connect_error', function(error) {
     console.log('❌ Socket.IO connection error:', error);
+    connectionAttempts++;
+    
+    if (connectionAttempts > 3) {
+      showToast('⚠️ កំពុងព្យាយាមភ្ជាប់ Server ឡើងវិញ...', 'warning');
+      setTimeout(function() {
+        socket.connect();
+      }, 2000);
+    }
   });
 
   socket.on('connect', function() {
@@ -84,8 +94,13 @@ function connectSocket() {
   socket.on('disconnect', function(reason) {
     console.log('🔌 Socket.IO disconnected:', reason);
     socketConnected = false;
+    
+    if (reason === 'io server disconnect' || reason === 'transport error') {
+      setTimeout(function() {
+        socket.connect();
+      }, 2000);
+    }
   });
-
   // ========== Socket Events ==========
   socket.on('room-joined', function(data) {
     console.log('🏠 Joined room:', data.roomId);
