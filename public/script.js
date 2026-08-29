@@ -1,5 +1,5 @@
 // ============================================================
-// SOCKET.IO CONNECTION - Polling Only (No WebSocket)
+// SOCKET.IO CONNECTION - FIXED
 // ============================================================
 let socket = null;
 let socketConnected = false;
@@ -37,10 +37,6 @@ let unreadChats = {};
 let isChatOpen = false;
 let chatTargetPeerId = null;
 let chatMessages = {};
-let chatMessageInput = null;
-let chatSendBtn = null;
-let chatUserList = null;
-let chatMessagesContainer = null;
 
 // ============================================================
 // REMOTE CONTROL VARIABLES
@@ -52,71 +48,181 @@ let isBeingControlled = false;
 let remotePointer = null;
 
 // ============================================================
-// SOCKET CONNECTION FUNCTION
+// SOCKET CONNECTION FUNCTION - FIXED
 // ============================================================
 function connectSocket() {
+  // ប្រើ WebSocket ជំនួស Polling
   socket = io({
-    transports: ['polling'],
+    transports: ['websocket', 'polling'],
     reconnection: true,
-    reconnectionAttempts: Infinity,
+    reconnectionAttempts: 10,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
-    timeout: 60000,
+    timeout: 30000,
     autoConnect: true,
     forceNew: true,
-    path: '/socket.io',
-    upgrade: false,
-    rememberUpgrade: false,
-    extraHeaders: {
-      'X-Forwarded-Proto': 'https'
-    }
+    path: '/socket.io'
   });
 
-  // ============================================================
-  // SOCKET EVENT HANDLERS
-  // ============================================================
   socket.on('connect_error', function(error) {
     console.log('❌ Socket.IO connection error:', error);
     connectionAttempts++;
     
-    if (connectionAttempts > 5) {
-      showToast('⚠️ កំពុងព្យាយាមភ្ជាប់ Server...', 'warning');
+    if (connectionAttempts > 3) {
+      // សាកល្បងប្រើ Polling
+      socket.io.opts.transports = ['polling'];
+      socket.connect();
     }
   });
 
   socket.on('connect', function() {
-    console.log('✅ Socket.IO connected successfully using Polling!');
+    console.log('✅ Socket.IO connected successfully!');
     socketConnected = true;
     connectionAttempts = 0;
     showToast('✅ ភ្ជាប់ Server បានជោគជ័យ!', 'success');
+    
+    // ប្រសិនបើមាន Peer ID ហើយ សូមចូលបន្ទប់ឡើងវិញ
+    if (myId && currentRoomId && myUsername) {
+      socket.emit('join-room', {
+        roomId: currentRoomId,
+        peerId: myId,
+        username: myUsername
+      });
+    }
   });
 
   socket.on('disconnect', function(reason) {
     console.log('🔌 Socket.IO disconnected:', reason);
     socketConnected = false;
-    if (reason === 'io server disconnect') {
-      socket.connect();
+  });
+
+  socket.on('reconnect', function() {
+    console.log('✅ Reconnected');
+    socketConnected = true;
+    // ចូលបន្ទប់ឡើងវិញ
+    if (myId && currentRoomId && myUsername) {
+      socket.emit('join-room', {
+        roomId: currentRoomId,
+        peerId: myId,
+        username: myUsername
+      });
     }
   });
 
-  socket.on('reconnect_attempt', function(attempt) {
-    console.log('🔄 Reconnect attempt ' + attempt);
+  // ============================================================
+  // ROOM EVENTS - FIXED
+  // ============================================================
+  
+  // ពេលចូលបន្ទប់ជោគជ័យ
+  socket.on('room-joined', function(data) {
+    console.log('✅ Room joined successfully:', data);
+    showToast('✅ ចូលបន្ទប់ ' + data.roomId + ' បានជោគជ័យ!', 'success');
+    
+    // បង្ហាញអ្នកប្រើដែលមានរួចហើយក្នុងបន្ទប់
+    if (data.existingUsers && data.existingUsers.length > 0) {
+      data.existingUsers.forEach(function(user) {
+        if (user.peerId !== myId) {
+          userNamesMap[user.peerId] = user.username;
+          addRemoteVideo(user.peerId, user.username);
+          setTimeout(function() {
+            connectToUser(user.peerId);
+          }, 500);
+        }
+      });
+      updateUserCount();
+      updateChatUserList();
+    }
   });
 
-  socket.on('reconnect', function(attempt) {
-    console.log('✅ Reconnected after ' + attempt + ' attempts');
-    socketConnected = true;
+  // ពេលមានអ្នកថ្មីចូល
+  socket.on('user-joined', function(data) {
+    console.log('👤 User joined:', data);
+    var peerId = data.peerId;
+    var username = data.username;
+    
+    if (peerId !== myId) {
+      userNamesMap[peerId] = username;
+      addRemoteVideo(peerId, username);
+      updateUserCount();
+      updateChatUserList();
+      playNotificationSound('join');
+      
+      // ភ្ជាប់ទៅអ្នកប្រើថ្មី
+      setTimeout(function() {
+        connectToUser(peerId);
+      }, 500);
+
+      // ប្រសិនបើកំពុងចែករំលែកអេក្រង់
+      if (isScreenSharing && screenStream && myPeer) {
+        setTimeout(function() {
+          myPeer.call(peerId, screenStream, { 
+            metadata: { type: 'screen', username: myUsername } 
+          });
+        }, 1000);
+      }
+    }
   });
 
-  socket.on('reconnect_failed', function() {
-    console.log('❌ Reconnect failed');
-    showToast('❌ មិនអាចភ្ជាប់ Server បានទេ!', 'error');
+  // ពេលអ្នកប្រើចាកចេញ
+  socket.on('user-left', function(data) {
+    console.log('👤 User left:', data);
+    var peerId = data.peerId;
+    
+    removeRemoteVideo(peerId);
+    removeRemoteScreenVideo(peerId);
+    
+    if (peerCalls[peerId]) {
+      peerCalls[peerId].close();
+      delete peerCalls[peerId];
+    }
+    
+    delete userNamesMap[peerId];
+    updateUserCount();
+    updateChatUserList();
+    playNotificationSound('leave');
   });
 
   // ============================================================
-  // ROOMS UPDATE
+  // CHAT MESSAGES
+  // ============================================================
+  socket.on('receive-private-message', function(data) {
+    console.log('💬 New message from:', data.fromUsername);
+    
+    if (!chatMessages[data.fromPeerId]) {
+      chatMessages[data.fromPeerId] = [];
+    }
+    chatMessages[data.fromPeerId].push({
+      from: data.fromPeerId,
+      fromUsername: data.fromUsername,
+      message: data.message,
+      time: new Date().toLocaleTimeString()
+    });
+
+    if (chatTargetPeerId === data.fromPeerId && isChatOpen) {
+      renderChatMessages();
+    }
+
+    if (!unreadChats[data.fromPeerId]) {
+      unreadChats[data.fromPeerId] = { count: 0, messages: [], username: data.fromUsername };
+    }
+    unreadChats[data.fromPeerId].count++;
+    unreadChats[data.fromPeerId].messages.push(data.message);
+    unreadChats[data.fromPeerId].username = data.fromUsername;
+    
+    updateChatBadge();
+    updateChatUserList();
+    playNotificationSound('message');
+    
+    if (!isChatOpen || chatTargetPeerId !== data.fromPeerId) {
+      showChatNotification(data.fromUsername, data.message, data.fromPeerId);
+    }
+  });
+
+  // ============================================================
+  // ADMIN EVENTS
   // ============================================================
   socket.on('rooms-update', function() {
+    console.log('🔄 Rooms update received');
     if ((currentUserRole === 'admin' || currentUserRole === 'supervisor') && 
         document.getElementById('admin-dashboard') &&
         !document.getElementById('admin-dashboard').classList.contains('hidden')) {
@@ -124,9 +230,6 @@ function connectSocket() {
     }
   });
 
-  // ============================================================
-  // SOUND NOTIFICATION
-  // ============================================================
   socket.on('play-sound', function(type) {
     playNotificationSound(type);
   });
@@ -145,7 +248,7 @@ function connectSocket() {
   });
 
   // ============================================================
-  // REMOTE CONTROL SOCKET EVENTS
+  // REMOTE CONTROL EVENTS
   // ============================================================
   socket.on('remote-control-request', function(data) {
     if (data.targetId === myId) {
@@ -160,7 +263,7 @@ function connectSocket() {
           })
         });
         isBeingControlled = true;
-        alert('អ្នកបានអនុញ្ញាត Remote Control! អ្នកគ្រប់គ្រងអាចបញ្ជា Screen របស់អ្នកបាន។');
+        alert('អ្នកបានអនុញ្ញាត Remote Control!');
       } else {
         fetch('/api/remote-control/reject', {
           method: 'POST',
@@ -173,7 +276,7 @@ function connectSocket() {
 
   socket.on('remote-control-approved', function(data) {
     if (data.controllerId === myId) {
-      alert('✅ Remote Control ត្រូវបានអនុញ្ញាត! អ្នកអាចគ្រប់គ្រង Screen ពីចម្ងាយបានហើយ។');
+      alert('✅ Remote Control ត្រូវបានអនុញ្ញាត!');
       isRemoteControlActive = true;
       remoteControlTarget = data.targetId;
       startRemoteControl();
@@ -190,14 +293,12 @@ function connectSocket() {
 
   socket.on('remote-control-ended', function(data) {
     if (data.controllerId === myId) {
-      alert('Remote Control បានបញ្ចប់!');
       isRemoteControlActive = false;
       remoteControlTarget = null;
       stopRemoteControl();
     }
     if (data.targetId === myId) {
       isBeingControlled = false;
-      alert('Remote Control បានបញ្ចប់!');
       if (remotePointer) {
         remotePointer.remove();
         remotePointer = null;
@@ -229,98 +330,6 @@ function connectSocket() {
         var inputEvent = new InputEvent('input', { bubbles: true });
         activeElement.dispatchEvent(inputEvent);
       }
-    }
-  });
-
-  // ============================================================
-  // CHAT MESSAGES - FIXED
-  // ============================================================
-  socket.on('receive-private-message', function(data) {
-    // រក្សាទុកសារក្នុង chatMessages
-    if (!chatMessages[data.fromPeerId]) {
-      chatMessages[data.fromPeerId] = [];
-    }
-    chatMessages[data.fromPeerId].push({
-      from: data.fromPeerId,
-      fromUsername: data.fromUsername,
-      message: data.message,
-      time: new Date().toLocaleTimeString()
-    });
-
-    // បង្ហាញក្នុង Chat បើកំពុងសន្ទនាជាមួយអ្នកផ្ញើ
-    if (chatTargetPeerId === data.fromPeerId && isChatOpen) {
-      renderChatMessages();
-    }
-
-    // បង្កើនចំនួន unread
-    if (!unreadChats[data.fromPeerId]) {
-      unreadChats[data.fromPeerId] = { count: 0, messages: [], username: data.fromUsername };
-    }
-    unreadChats[data.fromPeerId].count++;
-    unreadChats[data.fromPeerId].messages.push(data.message);
-    unreadChats[data.fromPeerId].username = data.fromUsername;
-    
-    updateChatBadge();
-    updateChatUserList();
-    playNotificationSound('message');
-    
-    // បង្ហាញ Notification
-    if (!isChatOpen || chatTargetPeerId !== data.fromPeerId) {
-      showChatNotification(data.fromUsername, data.message, data.fromPeerId);
-    }
-  });
-
-  // ============================================================
-  // USER JOIN/LEAVE EVENTS
-  // ============================================================
-  socket.on('existing-users', function(users) {
-    users.forEach(function(user, index) {
-      userNamesMap[user.peerId] = user.username;
-      addRemoteVideo(user.peerId, user.username);
-      setTimeout(function() {
-        connectToUser(user.peerId);
-      }, (index + 1) * 500);
-    });
-    updateUserCount();
-    updateChatUserList();
-  });
-
-  socket.on('user-joined', function(data) {
-    var peerId = data.peerId;
-    var username = data.username;
-    if (peerId !== myId) {
-      userNamesMap[peerId] = username;
-      addRemoteVideo(peerId, username);
-      updateUserCount();
-      updateChatUserList();
-
-      if (isScreenSharing && screenStream && myPeer) {
-        setTimeout(function() {
-          myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } });
-        }, 1200);
-      }
-    }
-  });
-
-  socket.on('user-left', function(peerId) {
-    removeRemoteVideo(peerId);
-    removeRemoteScreenVideo(peerId);
-    if (peerCalls[peerId]) {
-      peerCalls[peerId].close();
-      delete peerCalls[peerId];
-    }
-    delete userNamesMap[peerId];
-    updateUserCount();
-    updateChatUserList();
-  });
-
-  // ============================================================
-  // LEAVE ROOM RESPONSE
-  // ============================================================
-  socket.on('leave-room-response', function(data) {
-    console.log('✅ Leave room response:', data);
-    if (data.success) {
-      showToast('🚪 បានចាកចេញពីបន្ទប់!', 'success');
     }
   });
 }
@@ -373,10 +382,9 @@ function playNotificationSound(type) {
 }
 
 // ============================================================
-// CHAT FUNCTIONS - FIXED & IMPROVED
+// CHAT FUNCTIONS
 // ============================================================
 
-// បើក/បិទ Chat Panel
 function toggleChat() {
   const chatPanel = document.getElementById('chat-panel');
   if (!chatPanel) return;
@@ -386,7 +394,6 @@ function toggleChat() {
   if (isChatOpen) {
     chatPanel.classList.remove('hidden');
     chatPanel.style.display = 'flex';
-    // បើក Chat User List ដំបូង
     showChatUserList();
   } else {
     chatPanel.classList.add('hidden');
@@ -395,40 +402,45 @@ function toggleChat() {
   }
 }
 
-// បង្ហាញ User List ក្នុង Chat
 function showChatUserList() {
-  const userListContainer = document.getElementById('chat-user-list');
-  const messageContainer = document.getElementById('chat-messages-container');
+  const userList = document.getElementById('chatUserList');
+  const msgContainer = document.getElementById('chatMessagesContainer');
+  const userItems = userList.querySelectorAll('.chat-user-item');
   
-  if (userListContainer) userListContainer.style.display = 'block';
-  if (messageContainer) messageContainer.style.display = 'none';
+  // បង្ហាញ User List
+  userList.style.display = 'block';
+  if (msgContainer) {
+    msgContainer.classList.remove('show');
+    msgContainer.style.display = 'none';
+  }
+  
+  // ធ្វើបច្ចុប្បន្នភាព User List
+  updateChatUserList();
 }
 
-// បង្ហាញ Message Area
 function showChatMessages(peerId) {
   chatTargetPeerId = peerId;
   
-  const userListContainer = document.getElementById('chat-user-list');
-  const messageContainer = document.getElementById('chat-messages-container');
-  const chatTitle = document.getElementById('chat-title');
+  const userList = document.getElementById('chatUserList');
+  const msgContainer = document.getElementById('chatMessagesContainer');
+  const chatTitle = document.getElementById('chatTitle');
   
-  if (userListContainer) userListContainer.style.display = 'none';
-  if (messageContainer) messageContainer.style.display = 'flex';
+  // លាក់ User List
+  userList.style.display = 'none';
   
-  // កំណត់ចំណងជើង Chat
+  // បង្ហាញ Messages Container
+  if (msgContainer) {
+    msgContainer.classList.add('show');
+    msgContainer.style.display = 'flex';
+  }
+  
+  // កំណត់ចំណងជើង
   if (chatTitle) {
     const username = userNamesMap[peerId] || 'មិត្តភក្តិ';
     chatTitle.textContent = '👤 ' + username;
   }
   
-  // កំណត់ Chat Target
-  const chatInput = document.getElementById('chatInput');
-  if (chatInput) {
-    chatInput.dataset.target = peerId;
-    chatInput.focus();
-  }
-  
-  // សម្អាត Unread សម្រាប់អ្នកនេះ
+  // សម្អាត Unread
   if (unreadChats[peerId]) {
     unreadChats[peerId].count = 0;
     updateChatBadge();
@@ -436,11 +448,14 @@ function showChatMessages(peerId) {
   }
   
   renderChatMessages();
+  
+  // Focus Input
+  const chatInput = document.getElementById('chatInput');
+  if (chatInput) chatInput.focus();
 }
 
-// បង្ហាញសារទាំងអស់
 function renderChatMessages() {
-  const messagesContainer = document.getElementById('chat-messages');
+  const messagesContainer = document.getElementById('chatMessages');
   if (!messagesContainer || !chatTargetPeerId) return;
   
   messagesContainer.innerHTML = '';
@@ -457,10 +472,8 @@ function renderChatMessages() {
     const div = document.createElement('div');
     div.className = 'chat-msg ' + (isMyMessage ? 'my-msg' : 'other-msg');
     div.innerHTML = `
-      <div class="msg-bubble">
-        <div class="msg-text">${msg.message}</div>
-        <div class="msg-time">${msg.time || new Date().toLocaleTimeString()}</div>
-      </div>
+      <div class="msg-bubble">${msg.message}</div>
+      <div class="msg-time">${msg.time || new Date().toLocaleTimeString()}</div>
     `;
     messagesContainer.appendChild(div);
   });
@@ -468,12 +481,11 @@ function renderChatMessages() {
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
-// បញ្ជូនសារ
 function sendPrivateMessage() {
   const chatInput = document.getElementById('chatInput');
   if (!chatInput) return;
   
-  const targetPeerId = chatInput.dataset.target || chatTargetPeerId;
+  const targetPeerId = chatTargetPeerId;
   const message = chatInput.value.trim();
   
   if (!targetPeerId) {
@@ -483,14 +495,12 @@ function sendPrivateMessage() {
   }
   if (!message) return;
 
-  // ផ្ញើសារ
   socket.emit('send-private-message', {
     targetPeerId: targetPeerId,
     message: message,
     fromUsername: myUsername
   });
 
-  // រក្សាទុកក្នុង local
   if (!chatMessages[targetPeerId]) {
     chatMessages[targetPeerId] = [];
   }
@@ -505,23 +515,24 @@ function sendPrivateMessage() {
   renderChatMessages();
 }
 
-// ធ្វើបច្ចុប្បន្នភាព User List
 function updateChatUserList() {
-  const userList = document.getElementById('chat-user-list');
+  const userList = document.getElementById('chatUserList');
   if (!userList) return;
   
-  // រក្សាទុក scroll position
-  const scrollPos = userList.scrollTop;
-  
+  // រក្សាទុកតែផ្នែកខាងក្នុង (មិនត្រូវលុប Header)
+  const header = userList.querySelector('div:first-child');
   userList.innerHTML = '';
+  if (header) userList.appendChild(header);
   
-  // តម្រៀបអ្នកប្រើតាមឈ្មោះ
   const sortedUsers = Object.keys(userNamesMap)
     .filter(pid => pid !== myId)
     .sort((a, b) => userNamesMap[a].localeCompare(userNamesMap[b]));
   
   if (sortedUsers.length === 0) {
-    userList.innerHTML = '<div class="chat-empty">គ្មានអ្នកប្រើក្នុងបន្ទប់ទេ</div>';
+    const empty = document.createElement('div');
+    empty.style.cssText = 'padding:20px 12px; color:#666; font-size:13px; text-align:center;';
+    empty.textContent = 'គ្មានអ្នកប្រើក្នុងបន្ទប់ទេ';
+    userList.appendChild(empty);
     return;
   }
   
@@ -540,7 +551,7 @@ function updateChatUserList() {
       <div class="user-avatar">${username.charAt(0).toUpperCase()}</div>
       <div class="user-info">
         <div class="user-name">${username}</div>
-        <div class="user-last-msg">${lastMsg ? lastMsg.substring(0, 30) + (lastMsg.length > 30 ? '...' : '') : 'ចាប់ផ្ដើមសន្ទនា'}</div>
+        <div class="user-last-msg">${lastMsg ? lastMsg.substring(0, 25) + (lastMsg.length > 25 ? '...' : '') : 'ចាប់ផ្ដើមសន្ទនា'}</div>
       </div>
       ${unread > 0 ? `<div class="unread-badge">${unread}</div>` : ''}
     `;
@@ -551,58 +562,8 @@ function updateChatUserList() {
     
     userList.appendChild(div);
   });
-  
-  userList.scrollTop = scrollPos;
 }
 
-// បង្ហាញ Notification Chat
-function showChatNotification(username, message, peerId) {
-  // លុប Notification ចាស់
-  document.querySelectorAll('.chat-notification').forEach(function(el) {
-    if (el.dataset.peer === peerId) {
-      el.remove();
-    }
-  });
-  
-  const notif = document.createElement('div');
-  notif.className = 'chat-notification';
-  notif.dataset.peer = peerId;
-  notif.innerHTML = `
-    <button class="close-notif" onclick="event.stopPropagation(); this.parentElement.remove()">✕</button>
-    <div class="sender">👤 ${username}</div>
-    <div class="msg-preview">${message.length > 50 ? message.substring(0, 50) + '...' : message}</div>
-    <div class="time">${new Date().toLocaleTimeString()}</div>
-  `;
-  
-  notif.onclick = function() {
-    // បើក Chat
-    if (!isChatOpen) {
-      toggleChat();
-    }
-    // បង្ហាញសាររបស់អ្នកនេះ
-    showChatMessages(peerId);
-    // លុប Notification
-    this.remove();
-    // Focus លើ Input
-    const chatInput = document.getElementById('chatInput');
-    if (chatInput) chatInput.focus();
-  };
-  
-  document.body.appendChild(notif);
-  
-  // បាត់បន្ទាប់ពី 10 វិនាទី
-  setTimeout(function() {
-    if (notif.parentNode) {
-      notif.style.opacity = '0';
-      notif.style.transition = 'opacity 0.3s';
-      setTimeout(function() { notif.remove(); }, 300);
-    }
-  }, 10000);
-}
-
-// ============================================================
-// CHAT BADGE
-// ============================================================
 function updateChatBadge() {
   const badge = document.getElementById('chatBadgeCount');
   if (!badge) return;
@@ -622,6 +583,40 @@ function updateChatBadge() {
   }
 }
 
+function showChatNotification(username, message, peerId) {
+  document.querySelectorAll('.chat-notification').forEach(function(el) {
+    if (el.dataset.peer === peerId) el.remove();
+  });
+  
+  const notif = document.createElement('div');
+  notif.className = 'chat-notification';
+  notif.dataset.peer = peerId;
+  notif.innerHTML = `
+    <button class="close-notif" onclick="event.stopPropagation(); this.parentElement.remove()">✕</button>
+    <div class="sender">👤 ${username}</div>
+    <div class="msg-preview">${message.length > 50 ? message.substring(0, 50) + '...' : message}</div>
+    <div class="time">${new Date().toLocaleTimeString()}</div>
+  `;
+  
+  notif.onclick = function() {
+    if (!isChatOpen) toggleChat();
+    showChatMessages(peerId);
+    this.remove();
+    const chatInput = document.getElementById('chatInput');
+    if (chatInput) chatInput.focus();
+  };
+  
+  document.body.appendChild(notif);
+  
+  setTimeout(function() {
+    if (notif.parentNode) {
+      notif.style.opacity = '0';
+      notif.style.transition = 'opacity 0.3s';
+      setTimeout(function() { notif.remove(); }, 300);
+    }
+  }, 10000);
+}
+
 // ============================================================
 // TOAST NOTIFICATION
 // ============================================================
@@ -634,8 +629,7 @@ function showToast(message, type) {
     warning: '#f59e0b'
   };
   
-  const existing = document.querySelector('.toast');
-  if (existing) existing.remove();
+  document.querySelectorAll('.toast').forEach(function(el) { el.remove(); });
   
   const toast = document.createElement('div');
   toast.className = 'toast';
@@ -651,40 +645,223 @@ function showToast(message, type) {
 }
 
 // ============================================================
-// REMOTE CONTROL FUNCTIONS
+// PEERJS & WEBRTC FUNCTIONS
 // ============================================================
-function requestRemoteControl(targetId) {
-  if (currentUserRole !== 'admin' && currentUserRole !== 'supervisor') {
-    alert('អ្នកគ្មានសិទ្ធិប្រើមុខងារ Remote Control ទេ!');
+
+function initPeerJS() {
+  myPeer = new Peer(undefined, {
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ]
+    }
+  });
+
+  myPeer.on('open', function(id) {
+    myId = id;
+    console.log('✅ PeerJS Connected with ID:', myId);
+    
+    // ផ្ញើ join-room ទៅ Server
+    if (socket && socketConnected && currentRoomId && myUsername) {
+      socket.emit('join-room', {
+        roomId: currentRoomId,
+        peerId: myId,
+        username: myUsername
+      });
+    }
+  });
+
+  myPeer.on('call', function(call) {
+    console.log('📞 Incoming call from:', call.peer);
+    
+    if (localStream) {
+      call.answer(localStream);
+    } else {
+      initDummyStream();
+      call.answer(localStream);
+    }
+    
+    call.on('stream', function(remoteStream) {
+      console.log('📺 Received remote stream from:', call.peer);
+      const type = (call.metadata && call.metadata.type) || 'video';
+      const callerUsername = (call.metadata && call.metadata.username) || 'User';
+      
+      if (type === 'screen') {
+        addRemoteScreenVideo(call.peer, remoteStream, callerUsername);
+      } else {
+        attachRemoteStream(call.peer, remoteStream);
+      }
+    });
+
+    call.on('close', function() {
+      console.log('Call closed with:', call.peer);
+      removeRemoteVideo(call.peer);
+      removeRemoteScreenVideo(call.peer);
+      delete peerCalls[call.peer];
+    });
+
+    peerCalls[call.peer] = call;
+  });
+
+  myPeer.on('error', function(err) {
+    console.error('❌ PeerJS Error:', err);
+  });
+}
+
+function connectToUser(peerId) {
+  if (!myPeer || peerCalls[peerId]) {
+    console.log('Already connected or no peer:', peerId);
     return;
   }
   
-  fetch('/api/remote-control/request', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      controllerId: myId,
-      targetId: targetId,
-      roomId: currentRoomId
-    })
-  })
-  .then(function(res) { return res.json(); })
-  .then(function(data) {
-    if (data.success) {
-      alert('កំពុងផ្ញើសំណើរ Remote Control... សូមរង់ចាំការអនុញ្ញាតពីម្ចាស់ Screen!');
-      remoteControlRequestId = data.requestId;
-    } else {
-      alert('មិនអាចផ្ញើសំណើរបានទេ: ' + data.message);
-    }
+  if (!localStream) {
+    initDummyStream();
+  }
+  
+  console.log('📞 Calling user:', peerId);
+  const call = myPeer.call(peerId, localStream, {
+    metadata: { type: 'video', username: myUsername }
   });
+
+  call.on('stream', function(remoteStream) {
+    console.log('📺 Stream received from:', peerId);
+    attachRemoteStream(peerId, remoteStream);
+  });
+
+  call.on('close', function() {
+    console.log('Call closed with:', peerId);
+    removeRemoteVideo(peerId);
+    delete peerCalls[peerId];
+  });
+
+  peerCalls[peerId] = call;
 }
+
+// ============================================================
+// MEDIA FUNCTIONS
+// ============================================================
+
+function initDummyStream() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 480;
+  const ctx = canvas.getContext('2d');
+
+  function draw() {
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = '24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(myUsername || 'User', canvas.width / 2, canvas.height / 2);
+    dummyAnimFrame = requestAnimationFrame(draw);
+  }
+  draw();
+
+  const canvasStream = canvas.captureStream(15);
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = audioContext.createOscillator();
+  const dst = audioContext.createMediaStreamDestination();
+  osc.connect(dst);
+  osc.start();
+  const audioTrack = dst.stream.getAudioTracks()[0];
+  audioTrack.enabled = false;
+
+  localStream = new MediaStream([canvasStream.getVideoTracks()[0], audioTrack]);
+  if (localVideo) localVideo.srcObject = localStream;
+}
+
+function addRemoteVideo(peerId, username) {
+  if (document.getElementById('video-' + peerId)) return;
+
+  const card = document.createElement('div');
+  card.className = 'video-box';
+  card.id = 'video-' + peerId;
+
+  card.innerHTML = `
+    <div class="name-tag">👤 ${username}</div>
+    <video id="stream-${peerId}" autoplay playsinline></video>
+  `;
+  if (videoGrid) videoGrid.appendChild(card);
+}
+
+function attachRemoteStream(peerId, stream) {
+  const videoElem = document.getElementById('stream-' + peerId);
+  if (videoElem) {
+    videoElem.srcObject = stream;
+  }
+}
+
+function removeRemoteVideo(peerId) {
+  const card = document.getElementById('video-' + peerId);
+  if (card) card.remove();
+}
+
+function addRemoteScreenVideo(peerId, stream, username) {
+  removeRemoteScreenVideo(peerId);
+
+  const card = document.createElement('div');
+  card.className = 'video-box screen-box';
+  card.id = 'screen-' + peerId;
+
+  const video = document.createElement('video');
+  video.autoplay = true;
+  video.playsInline = true;
+  video.srcObject = stream;
+
+  const label = document.createElement('div');
+  label.className = 'name-tag';
+  label.textContent = '🖥️ Screen: ' + username;
+
+  card.appendChild(video);
+  card.appendChild(label);
+  if (screenGrid) screenGrid.appendChild(card);
+  
+  document.getElementById('screenTitle').style.display = 'block';
+}
+
+function removeRemoteScreenVideo(peerId) {
+  const card = document.getElementById('screen-' + peerId);
+  if (card) card.remove();
+  
+  // លាក់ title ប្រសិនបើគ្មាន screen
+  const screenGrid = document.getElementById('screenGrid');
+  if (screenGrid && screenGrid.children.length === 0) {
+    document.getElementById('screenTitle').style.display = 'none';
+  }
+}
+
+function updateUserCount() {
+  const countElem = document.getElementById('userCount');
+  if (countElem) {
+    const totalUsers = Object.keys(userNamesMap).length + 1;
+    countElem.textContent = totalUsers;
+  }
+}
+
+// ============================================================
+// REMOTE CONTROL FUNCTIONS
+// ============================================================
 
 function startRemoteControl() {
   if (!isRemoteControlActive) return;
   document.addEventListener('mousemove', handleRemoteMouseMove);
   document.addEventListener('click', handleRemoteMouseClick);
   document.addEventListener('keydown', handleRemoteKeyboard);
-  alert('🎯 Remote Control បានចាប់ផ្ដើម! អ្នកអាចប្រើ Mouse និង Keyboard ដើម្បីបញ្ជា Screen ចម្ងាយ។');
 }
 
 function stopRemoteControl() {
@@ -814,12 +991,36 @@ function showRemoteUserSelector() {
 function selectRemoteTarget(targetId) {
   var selector = document.querySelector('div[style*="z-index: 99998"]');
   if (selector) selector.remove();
-  requestRemoteControl(targetId);
+  
+  if (currentUserRole !== 'admin' && currentUserRole !== 'supervisor') {
+    alert('អ្នកគ្មានសិទ្ធិប្រើ Remote Control!');
+    return;
+  }
+  
+  fetch('/api/remote-control/request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      controllerId: myId,
+      targetId: targetId,
+      roomId: currentRoomId
+    })
+  })
+  .then(function(res) { return res.json(); })
+  .then(function(data) {
+    if (data.success) {
+      alert('កំពុងផ្ញើសំណើរ Remote Control... សូមរង់ចាំការអនុញ្ញាត!');
+      remoteControlRequestId = data.requestId;
+    } else {
+      alert('មិនអាចផ្ញើសំណើរបានទេ: ' + data.message);
+    }
+  });
 }
 
 // ============================================================
 // ADMIN FUNCTIONS
 // ============================================================
+
 function switchAdminTab(tab) {
   console.log('🔄 Switching to tab:', tab);
   
@@ -842,7 +1043,6 @@ function switchAdminTab(tab) {
     }
     var tabBtnRooms = document.getElementById('tabBtnRooms');
     if (tabBtnRooms) tabBtnRooms.classList.add('active');
-    
     loadAdminRoomMonitor();
     
   } else if (tab === 'users') {
@@ -853,7 +1053,6 @@ function switchAdminTab(tab) {
     }
     var tabBtnUsers = document.getElementById('tabBtnUsers');
     if (tabBtnUsers) tabBtnUsers.classList.add('active');
-    
     loadUsersTable();
     
   } else if (tab === 'newRoom') {
@@ -864,7 +1063,6 @@ function switchAdminTab(tab) {
     }
     var tabBtnNewRoom = document.getElementById('tabBtnNewRoom');
     if (tabBtnNewRoom) tabBtnNewRoom.classList.add('active');
-    
     loadRooms();
   }
 }
@@ -898,10 +1096,15 @@ async function loadAdminRoomMonitor() {
     if (!container) return;
     container.innerHTML = '';
 
+    if (!data.rooms || data.rooms.length === 0) {
+      container.innerHTML = '<p style="color:#64748b;">គ្មានបន្ទប់សកម្មទេ</p>';
+      return;
+    }
+
     data.rooms.forEach(function(room) {
       var isLive = room.userCount > 0;
       var statusHtml = isLive 
-        ? '<span style="color:#10b981; font-weight:bold;">🟢 កំពុងសកម្ម (' + room.userCount + ' នាក់)</span><br><small style="color:#94a3b8;">👤 ' + room.users.join(', ') + '</small>'
+        ? '<span style="color:#10b981; font-weight:bold;">🟢 កំពុងសកម្ម (' + room.userCount + ' នាក់)</span><br><small style="color:#94a3b8;">👤 ' + (room.users ? room.users.join(', ') : '') + '</small>'
         : '<span style="color:#64748b;">⚪ ទំនេរ (គ្មានមនុស្ស)</span>';
 
       container.innerHTML += `
@@ -1070,14 +1273,15 @@ function leaveRoom() {
 
   const roomContainer = document.getElementById('room-container');
   const chatPanel = document.getElementById('chat-panel');
-  const meetingContainer = document.getElementById('meeting-container');
   
   if (roomContainer) {
     roomContainer.classList.add('hidden');
     roomContainer.style.display = 'none';
   }
-  if (chatPanel) chatPanel.classList.add('hidden');
-  if (meetingContainer) meetingContainer.classList.add('hidden');
+  if (chatPanel) {
+    chatPanel.classList.add('hidden');
+    chatPanel.style.display = 'none';
+  }
 
   if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
     const adminDash = document.getElementById('admin-dashboard');
@@ -1095,7 +1299,7 @@ function leaveRoom() {
     switchAdminTab('rooms');
     loadAdminRoomMonitor();
     
-    showToast('🚪 បានចាកចេញពីបន្ទប់ ត្រឡប់ទៅ Admin Dashboard វិញ', 'warning');
+    showToast('🚪 បានចាកចេញពីបន្ទប់', 'warning');
   } else {
     const authCard = document.getElementById('auth');
     if (authCard) {
@@ -1109,7 +1313,7 @@ function leaveRoom() {
       mainBody.style.alignItems = 'center';
     }
     
-    showToast('🚪 បានចាកចេញពីបន្ទប់រៀបរយ!', 'warning');
+    showToast('🚪 បានចាកចេញពីបន្ទប់', 'warning');
   }
 
   currentRoomId = '';
@@ -1428,12 +1632,16 @@ function finalizeLogin(data) {
 
   if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
     const adminDash = document.getElementById('admin-dashboard');
-    if (adminDash) adminDash.classList.remove('hidden');
+    if (adminDash) {
+      adminDash.classList.remove('hidden');
+      adminDash.style.display = 'block';
+    }
     
     const adminRoleDisplay = document.getElementById('adminRoleDisplay');
     if (adminRoleDisplay) adminRoleDisplay.textContent = currentUserRole.toUpperCase();
     
     switchAdminTab('rooms');
+    showToast('✅ ចូលប្រើប្រាស់ជា ' + currentUserRole + ' បានជោគជ័យ!', 'success');
   } else {
     const roomContainer = document.getElementById('room-container');
     if (roomContainer) {
@@ -1458,171 +1666,16 @@ function finalizeLogin(data) {
     } else {
       initPeerJS();
     }
-  }
-
-  showToast('✅ ចូលប្រើប្រាស់បានជោគជ័យ!', 'success');
-}
-
-// ============================================================
-// MEETING & WEBRTC
-// ============================================================
-function startMeeting() {
-  var meetingContainer = document.getElementById('meeting-container');
-  if (meetingContainer) meetingContainer.classList.remove('hidden');
-
-  var displayRoomId = document.getElementById('displayRoomId');
-  if (displayRoomId) displayRoomId.textContent = currentRoomId;
-
-  initDummyStream();
-  initPeerJS();
-}
-
-function initDummyStream() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 640;
-  canvas.height = 480;
-  const ctx = canvas.getContext('2d');
-
-  function draw() {
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#38bdf8';
-    ctx.font = '24px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(myUsername || 'User', canvas.width / 2, canvas.height / 2);
-    dummyAnimFrame = requestAnimationFrame(draw);
-  }
-  draw();
-
-  const canvasStream = canvas.captureStream(15);
-  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  const osc = audioContext.createOscillator();
-  const dst = audioContext.createMediaStreamDestination();
-  osc.connect(dst);
-  osc.start();
-  const audioTrack = dst.stream.getAudioTracks()[0];
-  audioTrack.enabled = false;
-
-  localStream = new MediaStream([canvasStream.getVideoTracks()[0], audioTrack]);
-  if (localVideo) localVideo.srcObject = localStream;
-}
-
-function initPeerJS() {
-  myPeer = new Peer(undefined, {
-    config: {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' }
-      ]
-    }
-  });
-
-  myPeer.on('open', function(id) {
-    myId = id;
-    console.log('✅ PeerJS Connected with ID:', myId);
-    socket.emit('join-room', {
-      roomId: currentRoomId,
-      peerId: myId,
-      username: myUsername
-    });
-  });
-
-  myPeer.on('call', function(call) {
-    call.answer(localStream);
     
-    call.on('stream', function(remoteStream) {
-      const type = (call.metadata && call.metadata.type) || 'video';
-      const callerUsername = (call.metadata && call.metadata.username) || 'User';
-      
-      if (type === 'screen') {
-        addRemoteScreenVideo(call.peer, remoteStream, callerUsername);
-      } else {
-        attachRemoteStream(call.peer, remoteStream);
-      }
-    });
-
-    peerCalls[call.peer] = call;
-  });
-}
-
-function connectToUser(peerId) {
-  if (!myPeer || peerCalls[peerId]) return;
-  
-  const call = myPeer.call(peerId, localStream, {
-    metadata: { type: 'video', username: myUsername }
-  });
-
-  call.on('stream', function(remoteStream) {
-    attachRemoteStream(peerId, remoteStream);
-  });
-
-  call.on('close', function() {
-    removeRemoteVideo(peerId);
-  });
-
-  peerCalls[peerId] = call;
-}
-
-// ============================================================
-// MEDIA & UI HANDLING
-// ============================================================
-function addRemoteVideo(peerId, username) {
-  if (document.getElementById('video-' + peerId)) return;
-
-  const card = document.createElement('div');
-  card.className = 'video-card';
-  card.id = 'video-' + peerId;
-
-  card.innerHTML = `
-    <video id="stream-${peerId}" autoplay playsinline></video>
-    <div class="user-label">👤 ${username}</div>
-  `;
-  if (videoGrid) videoGrid.appendChild(card);
-}
-
-function attachRemoteStream(peerId, stream) {
-  const videoElem = document.getElementById('stream-' + peerId);
-  if (videoElem) {
-    videoElem.srcObject = stream;
+    showToast('✅ ចូលប្រើប្រាស់បានជោគជ័យ!', 'success');
   }
 }
 
-function removeRemoteVideo(peerId) {
-  const card = document.getElementById('video-' + peerId);
-  if (card) card.remove();
-}
-
-function addRemoteScreenVideo(peerId, stream, username) {
-  removeRemoteScreenVideo(peerId);
-
-  const card = document.createElement('div');
-  card.className = 'screen-card';
-  card.id = 'screen-' + peerId;
-
-  const video = document.createElement('video');
-  video.autoplay = true;
-  video.playsInline = true;
-  video.srcObject = stream;
-
-  const label = document.createElement('div');
-  label.className = 'user-label';
-  label.textContent = '🖥️ Screen: ' + username;
-
-  card.appendChild(video);
-  card.appendChild(label);
-  if (screenGrid) screenGrid.appendChild(card);
-}
-
-function removeRemoteScreenVideo(peerId) {
-  const card = document.getElementById('screen-' + peerId);
-  if (card) card.remove();
-}
-
+// ============================================================
+// TOGGLE CAMERA & MIC
+// ============================================================
 async function toggleCamera() {
-  const btn = document.getElementById('btnCamera');
+  const btn = document.getElementById('camBtnIcon');
   if (!isCameraOn) {
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -1630,52 +1683,131 @@ async function toggleCamera() {
       const audioTrack = cameraStream.getAudioTracks()[0];
 
       if (localStream) {
-        if (videoTrack) localStream.replaceTrack(localStream.getVideoTracks()[0], videoTrack);
-        if (audioTrack) localStream.replaceTrack(localStream.getAudioTracks()[0], audioTrack);
+        if (videoTrack) {
+          const oldVideo = localStream.getVideoTracks()[0];
+          if (oldVideo) localStream.removeTrack(oldVideo);
+          localStream.addTrack(videoTrack);
+        }
+        if (audioTrack) {
+          const oldAudio = localStream.getAudioTracks()[0];
+          if (oldAudio) localStream.removeTrack(oldAudio);
+          localStream.addTrack(audioTrack);
+        }
       } else {
         localStream = cameraStream;
       }
 
       if (localVideo) localVideo.srcObject = localStream;
       
+      // ជំនួស Track សម្រាប់ Call ទាំងអស់
       for (let pId in peerCalls) {
-        const sender = peerCalls[pId].peerConnection.getSenders().find(s => s.track.kind === 'video');
-        if (sender && videoTrack) sender.replaceTrack(videoTrack);
+        const pc = peerCalls[pId].peerConnection;
+        if (pc) {
+          const senders = pc.getSenders();
+          const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+          if (videoSender && videoTrack) {
+            videoSender.replaceTrack(videoTrack);
+          }
+        }
       }
 
       isCameraOn = true;
-      if (btn) btn.classList.add('active');
-      showToast('📷 កាមេរ៉ា និង មេក្រូ ត្រូវបានបើក', 'success');
+      if (btn) {
+        btn.classList.remove('off');
+        btn.innerHTML = '📷';
+        btn.title = 'បិទកាមេរ៉ា';
+      }
+      showToast('📷 កាមេរ៉ាត្រូវបានបើក', 'success');
     } catch (err) {
       showToast('❌ មិនអាចបើកកាមេរ៉ាបានទេ!', 'error');
     }
   } else {
     if (cameraStream) {
       cameraStream.getTracks().forEach(track => track.stop());
+      cameraStream = null;
     }
     isCameraOn = false;
-    if (btn) btn.classList.remove('active');
+    if (btn) {
+      btn.classList.add('off');
+      btn.innerHTML = '🚫';
+      btn.title = 'បើកកាមេរ៉ា';
+    }
     initDummyStream();
     showToast('📷 កាមេរ៉ាត្រូវបានបិទ', 'info');
   }
 }
 
+function toggleMic() {
+  const btn = document.getElementById('micBtnIcon');
+  if (!localStream || localStream.getAudioTracks().length === 0) {
+    showToast('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!', 'error');
+    return;
+  }
+  
+  const audioTrack = localStream.getAudioTracks()[0];
+  audioTrack.enabled = !audioTrack.enabled;
+  
+  if (audioTrack.enabled) {
+    btn.classList.remove('off');
+    btn.innerHTML = '🎤';
+    btn.title = 'បិទមេក្រូ';
+    showToast('🎤 មេក្រូបានបើក', 'info');
+  } else {
+    btn.classList.add('off');
+    btn.innerHTML = '🔇';
+    btn.title = 'បើកមេក្រូ';
+    showToast('🔇 មេក្រូបានបិទ', 'info');
+  }
+}
+
+// ============================================================
+// TOGGLE SCREEN SHARE
+// ============================================================
 async function toggleScreenShare() {
-  const btn = document.getElementById('btnScreen');
+  const btn = document.getElementById('screenBtn');
   if (!isScreenSharing) {
     try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ 
+        video: true,
+        audio: false
+      });
+      
       isScreenSharing = true;
-      if (btn) btn.classList.add('active');
+      btn.innerHTML = '🛑 Stop Screen';
+      btn.style.background = '#ef4444';
+      btn.style.color = 'white';
 
+      // ផ្ញើ Screen Stream ទៅអ្នកដទៃ
       for (let pId in userNamesMap) {
         if (pId !== myId && myPeer) {
-          myPeer.call(pId, screenStream, { metadata: { type: 'screen', username: myUsername } });
+          const call = myPeer.call(pId, screenStream, { 
+            metadata: { type: 'screen', username: myUsername } 
+          });
+          call.on('stream', function(remoteStream) {
+            addRemoteScreenVideo(pId, remoteStream, userNamesMap[pId]);
+          });
         }
       }
 
+      // បង្ហាញ Screen នៅ Local
+      const screenVideo = document.createElement('video');
+      screenVideo.autoplay = true;
+      screenVideo.playsInline = true;
+      screenVideo.srcObject = screenStream;
+      
+      const screenContainer = document.createElement('div');
+      screenContainer.className = 'video-box screen-box';
+      screenContainer.id = 'my-screen';
+      screenContainer.innerHTML = `
+        <div class="name-tag">🖥️ អេក្រង់របស់អ្នក</div>
+      `;
+      screenContainer.prepend(screenVideo);
+      
+      document.getElementById('screenGrid').appendChild(screenContainer);
+      document.getElementById('screenTitle').style.display = 'block';
+
       screenStream.getVideoTracks()[0].onended = function() {
-        stopScreenSharing();
+        toggleScreenShare();
       };
 
       showToast('🖥️ បានចាប់ផ្ដើមចែករំលែក Screen', 'success');
@@ -1684,6 +1816,7 @@ async function toggleScreenShare() {
       showToast('❌ មិនអាចចែករំលែក Screen បានទេ!', 'error');
     }
   } else {
+    // បញ្ឈប់ការចែករំលែក
     stopScreenSharing();
   }
 }
@@ -1694,23 +1827,65 @@ function stopScreenSharing() {
     screenStream = null;
   }
   isScreenSharing = false;
-  const btn = document.getElementById('btnScreen');
-  if (btn) btn.classList.remove('active');
+  
+  const btn = document.getElementById('screenBtn');
+  btn.innerHTML = '🖥️ Share Screen';
+  btn.style.background = '#f59e0b';
+  btn.style.color = '#000';
+  
+  document.getElementById('my-screen')?.remove();
+  
+  // ពិនិត្យមើលថាតើមាន Screen អ្នកផ្សេងនៅសល់ទេ
+  const screenGrid = document.getElementById('screenGrid');
+  if (screenGrid && screenGrid.children.length === 0) {
+    document.getElementById('screenTitle').style.display = 'none';
+  }
+  
   showToast('🖥️ បានបញ្ឈប់ការចែករំលែក Screen', 'info');
 }
 
-function updateUserCount() {
-  const countElem = document.getElementById('userCount');
-  if (countElem) {
-    const totalUsers = Object.keys(userNamesMap).length + 1;
-    countElem.textContent = totalUsers;
+// ============================================================
+// CHANGE MY PASSWORD
+// ============================================================
+function changeMyPassword() {
+  const oldPassword = prompt('បញ្ចូល Password ចាស់:');
+  if (!oldPassword) return;
+  
+  const newPassword = prompt('បញ្ចូល Password ថ្មី (យ៉ាងតិច 4 តួ):');
+  if (!newPassword || newPassword.length < 4) {
+    showToast('ពាក្យសម្ងាត់ត្រូវមានយ៉ាងតិច ៤ តួ!', 'error');
+    return;
   }
+  
+  const confirmPassword = prompt('បញ្ចូល Password ថ្មីម្តងទៀត:');
+  if (newPassword !== confirmPassword) {
+    showToast('Password មិនត្រូវគ្នា!', 'error');
+    return;
+  }
+  
+  fetch('/api/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: myUsername,
+      oldPassword: oldPassword,
+      newPassword: newPassword
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    showToast(data.message, data.success ? 'success' : 'error');
+  })
+  .catch(() => {
+    showToast('មានបញ្ហាក្នុងការប្តូរ Password!', 'error');
+  });
 }
 
 // ============================================================
 // INITIALIZATION
 // ============================================================
 window.addEventListener('DOMContentLoaded', function() {
+  console.log('🚀 App starting...');
   connectSocket();
   loadRooms();
   
@@ -1723,4 +1898,13 @@ window.addEventListener('DOMContentLoaded', function() {
       }
     });
   }
+  
+  // Click outside to close chat
+  document.addEventListener('click', function(e) {
+    const chatPanel = document.getElementById('chat-panel');
+    const chatBtn = document.getElementById('chatToggleBtn');
+    if (isChatOpen && chatPanel && !chatPanel.contains(e.target) && !chatBtn.contains(e.target)) {
+      // Don't auto close, user should click close button
+    }
+  });
 });
