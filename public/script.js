@@ -1298,14 +1298,12 @@ window.addEventListener('DOMContentLoaded', function() {
 // ============================================================
 // ADMIN LOGOUT FUNCTION
 // ============================================================
-function adminLogout() {
+function logoutAdmin() {
   if (confirm('តើអ្នកប្រាកដថាចង់ចាកចេញពី Admin Dashboard ទេ?')) {
-    // ជូនដំណឹងទៅ Server ប្រសិនបើមានការចុះឈ្មោះ Admin
     if (socket && socketConnected) {
       socket.emit('logout');
     }
     
-    // បង្ហាញ Message Toast ជូនដំណឹង
     showToast('👋 បានចាកចេញដោយជោគជ័យ!', 'info');
 
     // Reset Variables ទាំងអស់
@@ -1314,7 +1312,7 @@ function adminLogout() {
     currentRoomId = '';
     pendingLoginData = null;
 
-    // Reload Page ដើម្បី Reset State ទាំងអស់ឲ្យមកទំព័រ Login វិញ
+    // Reload Page ដើម្បីត្រឡប់ទៅកាន់ទំព័រ Login វិញ
     setTimeout(function() {
       window.location.reload();
     }, 500);
