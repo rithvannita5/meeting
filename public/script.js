@@ -50,17 +50,14 @@ let isBeingControlled = false;
 let remotePointer = null;
 
 // ============================================================
-// TURN SERVERS - FIXED (ប្រើ OpenRelay TURN)
+// TURN SERVERS - FREE
 // ============================================================
 const ICE_SERVERS = [
-  // STUN Servers
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
-  
-  // TURN Server 1: OpenRelay (ឥតគិតថ្លៃ)
   {
     urls: 'turn:openrelay.metered.ca:80',
     username: 'openrelayproject',
@@ -76,8 +73,6 @@ const ICE_SERVERS = [
     username: 'openrelayproject',
     credential: 'openrelayproject'
   },
-  
-  // TURN Server 2: Metered.ca (បន្ថែមជាជម្រើសទី 2)
   {
     urls: 'turn:global.relay.metered.ca:80',
     username: 'f8f65afd73bf8de153cc',
@@ -682,7 +677,29 @@ function attachIceDiagnostics(call, peerId, label) {
 }
 
 // ============================================================
-// INIT PEERJS - FIXED
+// UPDATE STREAM TO ALL PEERS - FIXED
+// ============================================================
+function updateStreamToAllPeers(stream) {
+  if (!stream) return;
+  
+  const videoTrack = stream.getVideoTracks()[0];
+  if (!videoTrack) return;
+  
+  Object.keys(peerCalls).forEach(peerId => {
+    const call = peerCalls[peerId];
+    if (call && call.peerConnection) {
+      const senders = call.peerConnection.getSenders();
+      const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+      if (videoSender) {
+        videoSender.replaceTrack(videoTrack);
+        console.log(`✅ Updated video track for peer: ${peerId}`);
+      }
+    }
+  });
+}
+
+// ============================================================
+// INIT PEERJS
 // ============================================================
 function initPeerJS() {
   if (peerInitialized) {
@@ -727,12 +744,12 @@ function initPeerJS() {
     myPeer.on('call', function(call) {
       console.log('📞 Incoming call from:', call.peer, 'metadata:', call.metadata);
       
-      if (localStream) {
-        call.answer(localStream);
-      } else {
+      if (!localStream) {
         initDummyStream();
-        call.answer(localStream);
       }
+      
+      // ✅ FIX: Answer with current localStream
+      call.answer(localStream);
 
       const type = (call.metadata && call.metadata.type) || 'video';
       attachIceDiagnostics(call, call.peer, type === 'screen' ? 'screen (incoming)' : 'video (incoming)');
@@ -848,8 +865,16 @@ function initDummyStream() {
   const audioTrack = dst.stream.getAudioTracks()[0];
   audioTrack.enabled = false;
 
-  localStream = new MediaStream([canvasStream.getVideoTracks()[0], audioTrack]);
-  if (localVideo) localVideo.srcObject = localStream;
+  const newStream = new MediaStream([canvasStream.getVideoTracks()[0], audioTrack]);
+  
+  if (localStream) {
+    localStream = newStream;
+    if (localVideo) localVideo.srcObject = localStream;
+    updateStreamToAllPeers(localStream);
+  } else {
+    localStream = newStream;
+    if (localVideo) localVideo.srcObject = localStream;
+  }
 }
 
 function addRemoteVideo(peerId, username) {
@@ -936,7 +961,7 @@ function updateUserCount() {
 }
 
 // ============================================================
-// MEDIA TOGGLE & SCREEN SHARE
+// MEDIA TOGGLE & SCREEN SHARE - FIXED
 // ============================================================
 
 function toggleMic() {
@@ -948,29 +973,45 @@ function toggleMic() {
 
 async function toggleCamera() {
   if (isCameraOn) {
+    // ====== បិទកាមេរ៉ា ======
     if (cameraStream) {
       cameraStream.getTracks().forEach(track => track.stop());
       cameraStream = null;
     }
     isCameraOn = false;
+    
+    if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
     initDummyStream();
+    
     showToast('📷 បានបិទកាមេរ៉ា', 'info');
+    
   } else {
+    // ====== បើកកាមេរ៉ា ======
     try {
-      cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      cameraStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        }, 
+        audio: true 
+      });
+      
       isCameraOn = true;
       if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
+      
+      // ប្តូរ localStream ទៅជា cameraStream
       localStream = cameraStream;
       if (localVideo) localVideo.srcObject = localStream;
       
-      Object.keys(peerCalls).forEach(pId => {
-        const videoTrack = localStream.getVideoTracks()[0];
-        const sender = peerCalls[pId].peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-        if (sender) sender.replaceTrack(videoTrack);
-      });
+      // ✅ FIX: បញ្ជូន Camera Stream ទៅអ្នកប្រើទាំងអស់
+      updateStreamToAllPeers(localStream);
+      
       showToast('📷 បានបើកកាមេរ៉ា', 'success');
+      
     } catch (err) {
+      console.error('❌ Camera error:', err);
       showToast('❌ មិនអាចបើកកាមេរ៉ាបានទេ!', 'error');
+      if (!localStream) initDummyStream();
     }
   }
 }
