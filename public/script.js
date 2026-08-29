@@ -54,8 +54,8 @@ let remotePointer = null;
 function connectSocket() {
   // បង្កើត Socket.IO ដោយប្រើប្រាស់ត្រឹម polling និងបិទ upgrade
   socket = io({
-    transports: ['polling'], // ប្រើតែ polling ដើម្បីកាត់បន្ថយ Error លើ Render Proxy
-    upgrade: false,          // បិទមិនឱ្យវាព្យាយាម upgrade ទៅ websocket
+    transports: ['polling'],
+    upgrade: false,
     reconnection: true,
     reconnectionAttempts: 10,
     reconnectionDelay: 1000,
@@ -91,7 +91,7 @@ function connectSocket() {
   socket.on('room-joined', function(data) {
     console.log('🏠 Joined room:', data.roomId);
     if (data.existingUsers) {
-      data.existingUsers.forEach(user => {
+      data.existingUsers.forEach(function(user) {
         if (user.peerId !== myId) {
           connectToNewUser(user.peerId, user.username);
         }
@@ -119,7 +119,6 @@ function connectSocket() {
     displayPrivateMessage(data.fromUsername, data.message);
   });
 }
-
   // ============================================================
   // ROOM EVENTS - FIXED
   // ============================================================
