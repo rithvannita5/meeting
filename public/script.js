@@ -166,10 +166,7 @@ function connectSocket() {
 
       if (isScreenSharing && screenStream && myPeer) {
         setTimeout(function() {
-          const call = myPeer.call(peerId, screenStream, {
-            metadata: { type: 'screen', username: myUsername }
-          });
-          attachIceDiagnostics(call, peerId, 'screen (outgoing, late-join)');
+          callScreenShareToUser(peerId);
         }, 1000);
       }
     }
@@ -638,31 +635,76 @@ function showChatNotification(username, message, peerId) {
 // PEERJS & WEBRTC FUNCTIONS
 // ============================================================
 
-// ✅ FIX: helper to log ICE connection state per-call, so black-screen /
-// cross-network failures show up clearly in the browser console instead of
-// failing silently.
-function attachIceDiagnostics(call, peerId, label) {
+// ✅ FIX: helper to log ICE connection state per-call AND automatically try
+// to recover the connection when it fails or drops — this is the actual
+// cause of "black screen + disconnect" when two peers are on very different
+// networks (both behind symmetric NAT, corporate firewalls, etc). Without
+// this, a failed ICE negotiation just dies silently with no retry.
+function attachIceDiagnostics(call, peerId, label, retryFn) {
   if (!call || !call.peerConnection) return;
+  let retried = false;
+
   call.peerConnection.oniceconnectionstatechange = function() {
     const state = call.peerConnection.iceConnectionState;
     console.log(`🧊 [${label}] ICE state with ${peerId}:`, state);
-    if (state === 'failed') {
-      console.log(`❌ [${label}] ICE FAILED with ${peerId} — TURN relay ប្រហែលមិនដំណើរការ ឬបណ្តាញរឹតបន្តឹងពេក`);
-      showToast('⚠️ ការតភ្ជាប់ជាមួយអ្នកប្រើម្នាក់មានបញ្ហា (Network)', 'warning');
+
+    if ((state === 'failed' || state === 'disconnected') && !retried) {
+      retried = true;
+      console.log(`❌ [${label}] ICE ${state} with ${peerId} — ព្យាយាមភ្ជាប់ឡើងវិញ...`);
+      showToast('⚠️ ការតភ្ជាប់មានបញ្ហា កំពុងព្យាយាមភ្ជាប់ឡើងវិញ...', 'warning');
+
+      // ជំហានទី១៖ សាកល្បង ICE restart លើ Peer Connection ដដែល (លឿនជាង)
+      if (typeof call.peerConnection.restartIce === 'function') {
+        try {
+          call.peerConnection.restartIce();
+        } catch (e) {
+          console.log('restartIce not supported/failed:', e);
+        }
+      }
+
+      // ជំហានទី២៖ បើនៅតែ Fail បន្ទាប់ពី ៥ វិនាទី បិទ Call ចាស់ ហើយហៅ retryFn
+      // ឡើងវិញទាំងស្រុង (បង្កើត Call ថ្មី) - នេះជាវិធីដែលអាចទុកចិត្តបានបំផុត
+      setTimeout(function() {
+        const currentState = call.peerConnection.iceConnectionState;
+        if ((currentState === 'failed' || currentState === 'disconnected') && retryFn) {
+          console.log(`🔄 [${label}] ព្យាយាមភ្ជាប់ Call ថ្មីជាមួយ ${peerId}...`);
+          try { call.close(); } catch (e) {}
+          delete peerCalls[peerId];
+          retryFn();
+        }
+      }, 5000);
+    }
+
+    if (state === 'connected' || state === 'completed') {
+      retried = false; // reset once healthy again
     }
   };
 }
 
 function initPeerJS() {
+  // ✅ FIX: the old code created `new Peer(undefined, { config: {...} })`
+  // with NO host/port/path — that silently connects to PeerJS's PUBLIC
+  // CLOUD signaling server (0.peerjs.com), completely ignoring the
+  // ExpressPeerServer you're self-hosting at /peerjs in server.js!
+  // That public server has strict rate limits and is blocked on some
+  // corporate/school networks, which is a major cause of connections
+  // failing specifically when two users are on very different networks.
+  // We now explicitly point to our own self-hosted PeerServer.
+  const isHttps = window.location.protocol === 'https:';
   myPeer = new Peer(undefined, {
+    host: window.location.hostname,
+    port: window.location.port ? Number(window.location.port) : (isHttps ? 443 : 80),
+    path: '/peerjs',
+    secure: isHttps,
     config: {
-      iceServers: ICE_SERVERS
+      iceServers: ICE_SERVERS,
+      iceCandidatePoolSize: 10
     }
   });
 
   myPeer.on('open', function(id) {
     myId = id;
-    console.log('✅ PeerJS Connected with ID:', myId);
+    console.log('✅ PeerJS Connected with ID:', myId, '(self-hosted /peerjs)');
     
     if (socket && socketConnected && currentRoomId && myUsername) {
       socket.emit('join-room', {
@@ -684,8 +726,9 @@ function initPeerJS() {
     }
 
     const type = (call.metadata && call.metadata.type) || 'video';
-    attachIceDiagnostics(call, call.peer, type === 'screen' ? 'screen (incoming)' : 'video (incoming)');
-    
+    const label = type === 'screen' ? 'screen (incoming)' : 'video (incoming)';
+    attachIceDiagnostics(call, call.peer, label, null); // incoming side doesn't re-initiate; caller side retries
+
     call.on('stream', function(remoteStream) {
       console.log('📺 Received remote stream from:', call.peer, 'type:', type);
       const callerUsername = (call.metadata && call.metadata.username) || 'User';
@@ -713,6 +756,14 @@ function initPeerJS() {
 
   myPeer.on('error', function(err) {
     console.error('❌ PeerJS Error:', err);
+    showToast('⚠️ PeerJS មានបញ្ហា: ' + (err && err.type ? err.type : 'unknown'), 'warning');
+  });
+
+  myPeer.on('disconnected', function() {
+    console.log('⚠️ PeerJS disconnected from signaling server, reconnecting...');
+    if (myPeer && !myPeer.destroyed) {
+      try { myPeer.reconnect(); } catch (e) { console.log('reconnect failed', e); }
+    }
   });
 }
 
@@ -731,7 +782,9 @@ function connectToUser(peerId) {
     metadata: { type: 'video', username: myUsername }
   });
 
-  attachIceDiagnostics(call, peerId, 'video (outgoing)');
+  attachIceDiagnostics(call, peerId, 'video (outgoing)', function() {
+    connectToUser(peerId); // retry from scratch
+  });
 
   call.on('stream', function(remoteStream) {
     console.log('📺 Stream received from:', peerId);
@@ -914,6 +967,19 @@ async function toggleCamera() {
   }
 }
 
+// ✅ FIX: pulled into its own function (not stored in peerCalls, since that
+// dict is used for the video call to the same peerId) so the ICE-failure
+// retry logic can re-issue the screen-share call on its own.
+function callScreenShareToUser(peerId) {
+  if (!myPeer || !screenStream || !isScreenSharing) return;
+  const call = myPeer.call(peerId, screenStream, {
+    metadata: { type: 'screen', username: myUsername }
+  });
+  attachIceDiagnostics(call, peerId, 'screen (outgoing)', function() {
+    callScreenShareToUser(peerId);
+  });
+}
+
 async function toggleScreenShare() {
   if (isScreenSharing) {
     if (screenStream) {
@@ -929,10 +995,7 @@ async function toggleScreenShare() {
       
       Object.keys(userNamesMap).forEach(peerId => {
         if (peerId !== myId && myPeer) {
-          const call = myPeer.call(peerId, screenStream, {
-            metadata: { type: 'screen', username: myUsername }
-          });
-          attachIceDiagnostics(call, peerId, 'screen (outgoing)');
+          callScreenShareToUser(peerId);
         }
       });
       
