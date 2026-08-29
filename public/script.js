@@ -71,6 +71,7 @@ const ICE_SERVERS_FALLBACK = [
 // SOCKET CONNECTION FUNCTION
 // ============================================================
 function connectSocket() {
+  // ✅ FIX: ប្រើតែ polling transport
   socket = io({
     transports: ['polling'],
     upgrade: false,
@@ -80,18 +81,25 @@ function connectSocket() {
     reconnectionDelayMax: 5000,
     timeout: 60000,
     forceNew: true,
-    path: '/socket.io'
+    path: '/socket.io',
+    // ✅ FIX: បន្ថែម extraHeaders
+    extraHeaders: {
+      'Access-Control-Allow-Origin': '*'
+    }
   });
 
   socket.on('connect_error', function(error) {
     console.log('❌ Socket.IO connection error:', error);
     connectionAttempts++;
     
-    if (connectionAttempts > 3) {
+    if (connectionAttempts > 5) {
       showToast('⚠️ កំពុងព្យាយាមភ្ជាប់ Server ឡើងវិញ...', 'warning');
       setTimeout(function() {
-        socket.connect();
-      }, 2000);
+        if (socket) {
+          socket.close();
+          socket.connect();
+        }
+      }, 3000);
     }
   });
 
@@ -116,9 +124,39 @@ function connectSocket() {
     
     if (reason === 'io server disconnect' || reason === 'transport error') {
       setTimeout(function() {
-        socket.connect();
-      }, 2000);
+        if (socket) {
+          socket.connect();
+        }
+      }, 3000);
     }
+  });
+
+  // ✅ FIX: បន្ថែម reconnect events
+  socket.on('reconnect', function(attemptNumber) {
+    console.log('🔄 Socket.IO reconnected after', attemptNumber, 'attempts');
+    socketConnected = true;
+    showToast('✅ Reconnected to server!', 'success');
+    
+    if (myId && currentRoomId && myUsername) {
+      socket.emit('join-room', {
+        roomId: currentRoomId,
+        peerId: myId,
+        username: myUsername
+      });
+    }
+  });
+
+  socket.on('reconnect_attempt', function(attempt) {
+    console.log('🔄 Socket.IO reconnect attempt:', attempt);
+  });
+
+  socket.on('reconnect_error', function(error) {
+    console.log('❌ Socket.IO reconnect error:', error);
+  });
+
+  socket.on('reconnect_failed', function() {
+    console.log('❌ Socket.IO reconnect failed');
+    showToast('❌ មិនអាចភ្ជាប់ Server ឡើងវិញបានទេ!', 'error');
   });
 
   // ========== Socket Events ==========
@@ -323,6 +361,28 @@ function connectSocket() {
     }
   });
 }
+
+// script.js - បន្ថែមមុខងារសាកល្បង
+
+function testSocketConnection() {
+  if (socket && socketConnected) {
+    socket.emit('ping', { time: Date.now() }, function(response) {
+      console.log('🏓 Socket ping response:', response);
+      if (response && response.status === 'pong') {
+        console.log('✅ Socket connection is healthy');
+      } else {
+        console.log('⚠️ Socket connection is not responding');
+        // ព្យាយាម reconnect
+        if (socket) {
+          socket.connect();
+        }
+      }
+    });
+  }
+}
+
+// សាកល្បងរៀងរាល់ 30 វិនាទី
+setInterval(testSocketConnection, 30000);
 
 // ============================================================
 // SOUND NOTIFICATION
