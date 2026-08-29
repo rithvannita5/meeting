@@ -54,7 +54,13 @@ let remotePointer = null;
 // different countries, etc). If screen share keeps showing a black box for
 // specific network combinations, replace/add credentials from your own TURN
 // provider (e.g. Metered.ca free tier, Cloudflare Calls TURN, Twilio NTS).
-const ICE_SERVERS = [
+// ✅ FIX: local base list kept as a fallback. If /api/turn-credentials
+// returns real Cloudflare TURN servers (see server.js), they are merged in
+// front of this list at startup — see fetchTurnCredentials() /
+// initPeerJS() below. openrelay.metered.ca is kept only as an extra
+// fallback; the console log showed it is NOT producing "relay" candidates
+// for these users' networks right now, so don't rely on it alone.
+let ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
@@ -76,6 +82,26 @@ const ICE_SERVERS = [
     credential: 'openrelayproject'
   }
 ];
+
+// Fetches short-lived TURN credentials from our own server (which in turn
+// asks Cloudflare Realtime, if TURN_KEY_ID/TURN_KEY_API_TOKEN are set on
+// Render). Merges them to the FRONT of ICE_SERVERS so they're tried first.
+// Safe no-op if the endpoint/env vars aren't configured.
+async function fetchTurnCredentials() {
+  try {
+    const res = await fetch('/api/turn-credentials');
+    const data = await res.json();
+    if (data && data.iceServers) {
+      const cfServers = Array.isArray(data.iceServers) ? data.iceServers : [data.iceServers];
+      console.log('✅ Loaded TURN credentials from Cloudflare Realtime:', cfServers.length, 'entries');
+      ICE_SERVERS = [...cfServers, ...ICE_SERVERS];
+    } else {
+      console.log('ℹ️ No dynamic TURN credentials configured (TURN_KEY_ID/TURN_KEY_API_TOKEN not set on server) — using static fallback list only.');
+    }
+  } catch (err) {
+    console.log('⚠️ Could not fetch TURN credentials, using static fallback list:', err);
+  }
+}
 
 // ============================================================
 // SOCKET CONNECTION FUNCTION - FIXED
@@ -714,7 +740,12 @@ function attachIceDiagnostics(call, peerId, label) {
   };
 }
 
-function initPeerJS() {
+async function initPeerJS() {
+  // ✅ FIX: get the freshest ICE server list (Cloudflare TURN if configured)
+  // before opening the peer connection, so the very first call already has
+  // working relay candidates instead of retrying after failing once.
+  await fetchTurnCredentials();
+
   // ✅ FIX (root cause of "screen share not showing" + "network problem" toast):
   // Previously `new Peer(undefined, {...})` had no host/path, so the PeerJS
   // client fell back to the PUBLIC PeerJS cloud broker (0.peerjs.com) for
