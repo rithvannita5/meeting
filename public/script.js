@@ -76,32 +76,38 @@ function connectSocket() {
     transports: ['polling'],
     upgrade: false,
     reconnection: true,
-    reconnectionAttempts: 20,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 5000,
-    timeout: 60000,
+    reconnectionAttempts: 5,        // ✅ FIX: កាត់បន្ថយចំនួនព្យាយាម
+    reconnectionDelay: 2000,         // ✅ FIX: បង្កើន delay
+    reconnectionDelayMax: 10000,
+    timeout: 30000,                  // ✅ FIX: កាត់បន្ថយ timeout
     forceNew: true,
     path: '/socket.io'
   });
 
+  // ✅ FIX: បន្ថែម reconnect attempt limit
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_ATTEMPTS = 5;
+
   socket.on('connect_error', function(error) {
     console.log('❌ Socket.IO connection error:', error);
-    connectionAttempts++;
+    reconnectAttempts++;
     
-    if (connectionAttempts > 5) {
-      showToast('⚠️ កំពុងព្យាយាមភ្ជាប់ Server ឡើងវិញ...', 'warning');
+    if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+      console.log('❌ Max reconnect attempts reached, reloading page...');
+      showToast('⚠️ មិនអាចភ្ជាប់ Server បានទេ! កំពុងផ្ទុកឡើងវិញ...', 'error');
       setTimeout(function() {
-        if (socket) {
-          socket.connect();
-        }
+        location.reload();
       }, 3000);
+      return;
     }
+    
+    showToast(`⚠️ កំពុងព្យាយាមភ្ជាប់ Server (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`, 'warning');
   });
 
   socket.on('connect', function() {
     console.log('✅ Socket.IO connected successfully!');
     socketConnected = true;
-    connectionAttempts = 0;
+    reconnectAttempts = 0;
     showToast('✅ ភ្ជាប់ Server បានជោគជ័យ!', 'success');
     
     if (myId && currentRoomId && myUsername) {
@@ -124,33 +130,6 @@ function connectSocket() {
         }
       }, 3000);
     }
-  });
-
-  socket.on('reconnect', function(attemptNumber) {
-    console.log('🔄 Socket.IO reconnected after', attemptNumber, 'attempts');
-    socketConnected = true;
-    showToast('✅ Reconnected to server!', 'success');
-    
-    if (myId && currentRoomId && myUsername) {
-      socket.emit('join-room', {
-        roomId: currentRoomId,
-        peerId: myId,
-        username: myUsername
-      });
-    }
-  });
-
-  socket.on('reconnect_attempt', function(attempt) {
-    console.log('🔄 Socket.IO reconnect attempt:', attempt);
-  });
-
-  socket.on('reconnect_error', function(error) {
-    console.log('❌ Socket.IO reconnect error:', error);
-  });
-
-  socket.on('reconnect_failed', function() {
-    console.log('❌ Socket.IO reconnect failed');
-    showToast('❌ មិនអាចភ្ជាប់ Server ឡើងវិញបានទេ!', 'error');
   });
 
   // ========== Socket Events ==========
