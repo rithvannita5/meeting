@@ -20,7 +20,6 @@ const peerServer = ExpressPeerServer(server, {
 app.use('/peerjs', peerServer);
 
 // ========== Socket.IO Config ==========
-// ========== Socket.IO Config - FIXED ==========
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -54,6 +53,9 @@ io.engine.on("headers", (headers, req) => {
   headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
   headers["Access-Control-Allow-Headers"] = "Content-Type";
 });
+
+
+
 // ============================================================
 // CLOUDFLARE TURN API
 // ============================================================
@@ -431,6 +433,17 @@ app.post('/api/remote-control/end', async (req, res) => {
   }
 });
 
+// server.js - បន្ថែមការពិនិត្យ socket connection
+
+io.on('connection', (socket) => {
+  console.log('🔌 Socket connected:', socket.id);
+  
+  // ✅ FIX: ផ្ញើ acknowledgment ពេលភ្ជាប់បាន
+  socket.emit('connection_ack', { 
+    status: 'connected', 
+    socketId: socket.id 
+  });
+  
 // ========== Socket.io Logic ==========
 io.on('connection', (socket) => {
   console.log('🔌 Socket connected:', socket.id);
