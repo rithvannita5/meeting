@@ -1,150 +1,523 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const { ExpressPeerServer } = require('peer');
 const path = require('path');
+const mongoose = require('mongoose');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  path: '/socket.io',
-  cors: { origin: '*' }
-});
 
+// Express Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// DATA STORES
-const rooms = [{ id: 'room-1', name: 'បន្ទប់ទី ១' }, { id: 'room-2', name: 'បន្ទប់ទី ២' }];
-const users = [
-  { username: 'admin', password: '123', role: 'admin' },
-  { username: 'user1', password: '123', role: 'user' },
-  { username: 'user2', password: '123', role: 'user' }
-];
+// Express PeerServer
+const peerServer = ExpressPeerServer(server, {
+  debug: true,
+  path: '/'
+});
+app.use('/peerjs', peerServer);
 
-// USER SESSIONS FOR 2FA TRACKING
-// { "username": { "deviceId1": socketId, "deviceId2": socketId } }
-const userSessions = {};
-const pendingOTP = {};
+// ========== Socket.IO Config - FIXED FOR RENDER ==========
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ['polling'],  // ប្រើ Polling តែប៉ុណ្ណោះ
+  allowUpgrades: false,
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  cookie: false,
+  connectTimeout: 45000,
+  maxHttpBufferSize: 1e8,
+  path: '/socket.io'
+});
 
-// REST API
-app.get('/api/rooms', (req, res) => res.json(rooms));
+io.engine.on("connection_error", (err) => {
+  console.log('❌ Socket.IO engine error:', err);
+});
 
-app.post('/api/login', (req, res) => {
-  const { username, password, roomId, deviceId } = req.body;
-  const user = users.find(u => u.username === username && u.password === password);
-  
-  if (!user) return res.status(401).json({ success: false, message: 'Password មិនត្រឹមត្រូវ!' });
+// ========== Base Routes ==========
+app.get('/ping', (req, res) => res.send('pong'));
 
-  if (!userSessions[username]) userSessions[username] = {};
+// ========== MongoDB Atlas Config ==========
+// ⚠️ សូមប្តូរ Password Database ជាបន្ទាន់ ហើយដាក់តម្លៃថ្មីនៅក្នុង Environment
+// Variable MONGO_URI នៅលើ Render (កុំដាក់ hardcode ក្នុង code ទៀត)
+const MONGO_URI = process.env.MONGO_URI;
+if (!MONGO_URI) {
+  console.error('❌ MONGO_URI environment variable មិនត្រូវបានកំណត់ទេ! សូមកំណត់វានៅក្នុង Render Environment Variables.');
+}
 
-  const activeDevices = Object.keys(userSessions[username]);
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  role: { type: String, default: 'user', enum: ['admin', 'supervisor', 'user'] },
+  assignedRoom: { type: String, default: 'room-1' },
+  isBlocked: { type: Boolean, default: false }
+});
 
-  // 2FA LOGIC: ឆែកតែ Username មួយនេះ! បើកំពុង Login លើ Device ផ្សេងស្រាប់ហើយ -> ទាមទារ 2FA
-  if (activeDevices.length > 0 && !userSessions[username][deviceId]) {
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    pendingOTP[username] = otp;
+const roomSchema = new mongoose.Schema({
+  roomId: { type: String, required: true, unique: true }
+});
 
-    // ផ្ញើ OTP ទៅ Device ទី១ តាម Socket
-    const firstDeviceId = activeDevices[0];
-    const firstSocketId = userSessions[username][firstDeviceId];
-    if (firstSocketId) {
-      io.to(firstSocketId).emit('receive-otp', { otp: otp });
+const remoteControlSchema = new mongoose.Schema({
+  controllerId: { type: String, required: true },
+  targetId: { type: String, required: true },
+  roomId: { type: String, required: true },
+  status: { type: String, default: 'pending' }
+});
+
+const User = mongoose.model('User', userSchema);
+const Room = mongoose.model('Room', roomSchema);
+const RemoteControl = mongoose.model('RemoteControl', remoteControlSchema);
+
+mongoose.connect(MONGO_URI)
+  .then(async () => {
+    console.log('✅ Connected to MongoDB Atlas!');
+    const adminExists = await User.findOne({ username: 'admin' });
+    if (!adminExists) {
+      await User.create({ username: 'admin', password: '123', role: 'admin', assignedRoom: 'all', isBlocked: false });
+      console.log('✅ Created default admin user');
+    }
+    const defaultRoom1 = await Room.findOne({ roomId: 'room-1' });
+    if (!defaultRoom1) await Room.create({ roomId: 'room-1' });
+    const defaultRoom2 = await Room.findOne({ roomId: 'room-2' });
+    if (!defaultRoom2) await Room.create({ roomId: 'room-2' });
+    console.log('✅ Default rooms ready');
+  })
+  .catch(err => console.error('❌ MongoDB Error:', err));
+
+const roomUsers = {};
+const activeSockets = new Map();
+const otpStore = {};
+
+// ========== REST APIs ==========
+app.post('/api/login', async (req, res) => {
+  const { username, password, roomId } = req.body;
+  try {
+    const user = await User.findOne({ username, password });
+    if (!user) return res.status(401).json({ success: false, message: 'ឈ្មោះ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ!' });
+    if (user.isBlocked) return res.status(403).json({ success: false, message: 'គណនីត្រូវបានផ្អាក!' });
+
+    if (user.role !== 'admin' && user.role !== 'supervisor' && user.assignedRoom !== roomId) {
+      return res.status(403).json({ success: false, message: `អ្នកគ្មានសិទ្ធិចូលបន្ទប់ ${roomId} ទេ!` });
     }
 
-    return res.json({ require2FA: true, message: 'គណនីនេះកំពុងប្រើលើ Device ផ្សេង។ ត្រូវការ OTP 2FA!' });
+    // ✅ FIX: ត្រួតពិនិត្យ socket ថាមានវត្តមានពិតប្រាកដ (មិនមែន ghost session ដែលចាស់ជាប់
+    // ក្នុង Map ដោយសារ disconnect មិនស្អាត) មុននឹងចាត់ទុកថា user កំពុង Online នៅ device ផ្សេង
+    let onlineSockets = [];
+    for (let [sId, data] of activeSockets.entries()) {
+      if (data.username === username) {
+        if (io.sockets.sockets.has(sId)) {
+          onlineSockets.push(sId);
+        } else {
+          // socket នេះលែងមានវត្តមានក្នុង io ទៀតហើយ (ghost) - លុបចោល
+          activeSockets.delete(sId);
+        }
+      }
+    }
+
+    if (onlineSockets.length > 0) {
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      otpStore[username] = otp;
+      onlineSockets.forEach(sId => io.to(sId).emit('receive-otp', { otp, ip: req.ip }));
+      io.emit('admin-alert', { username: username, count: onlineSockets.length + 1 });
+      return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។ សូមបញ្ចូលលេខកូដ 2FA!' });
+    }
+
+    res.json({ success: true, user: { id: user._id, username: user.username, role: user.role, assignedRoom: user.assignedRoom } });
+  } catch (err) { 
+    console.error('Login error:', err);
+    res.status(500).json({ success: false, message: 'Server error' }); 
   }
-
-  const peerId = 'peer_' + username + '_' + Math.random().toString(36).substr(2, 5);
-  res.json({ success: true, role: user.role, peerId: peerId });
 });
 
-app.post('/api/verify-2fa', (req, res) => {
-  const { username, otp, deviceId } = req.body;
-  if (pendingOTP[username] && pendingOTP[username] === otp) {
-    delete pendingOTP[username];
-    const user = users.find(u => u.username === username);
-    const peerId = 'peer_' + username + '_' + Math.random().toString(36).substr(2, 5);
-    res.json({ success: true, role: user.role, peerId: peerId });
-  } else {
-    res.status(400).json({ success: false, message: 'លេខ OTP មិនត្រឹមត្រូវ!' });
+app.post('/api/verify-2fa', async (req, res) => {
+  const { username, password, otp } = req.body;
+  try {
+    if (otpStore[username] && otpStore[username] === otp) {
+      delete otpStore[username];
+      const user = await User.findOne({ username, password });
+      if (!user) return res.status(401).json({ success: false, message: 'User មិនមានទេ!' });
+      res.json({ success: true, user: { id: user._id, username: user.username, role: user.role, assignedRoom: user.assignedRoom } });
+    } else {
+      res.status(401).json({ success: false, message: '❌ លេខកូដ 2FA មិនត្រឹមត្រូវទេ!' });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-app.get('/api/rooms/status', (req, res) => {
-  const status = rooms.map(r => {
-    const roomSockets = io.sockets.adapter.rooms.get(r.id);
-    return { id: r.id, name: r.name, users: roomSockets ? Array.from(roomSockets) : [] };
-  });
-  res.json(status);
+app.post('/api/change-password', async (req, res) => {
+  const { username, oldPassword, newPassword } = req.body;
+  try {
+    const user = await User.findOne({ username, password: oldPassword });
+    if (!user) return res.status(401).json({ success: false, message: '❌ លេខសម្ងាត់ចាស់មិនត្រឹមត្រូវទេ!' });
+    user.password = newPassword; 
+    await user.save();
+    res.json({ success: true, message: '✅ ប្តូរលេខសម្ងាត់បានជោគជ័យ!' });
+  } catch (err) { 
+    console.error('Change password error:', err);
+    res.status(500).json({ success: false, message: 'Server error' }); 
+  }
 });
 
-// SOCKET.IO EVENTS
-const socketUserMap = {}; // socket.id -> { username, peerId, roomId, deviceId }
+app.get('/api/users', async (req, res) => {
+  try { 
+    const users = await User.find({}, '-password'); 
+    res.json({ users: users.map(u => ({ id: u._id, username: u.username, role: u.role, assignedRoom: u.assignedRoom, isBlocked: u.isBlocked })) }); 
+  } catch (err) { 
+    console.error('Get users error:', err);
+    res.status(500).json({ message: 'Error fetching users' }); 
+  }
+});
 
+const handleCreateUser = async (req, res) => {
+  const { username, password, assignedRoom, role } = req.body;
+  if (!username || !password) return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់!' });
+  try {
+    const exists = await User.findOne({ username });
+    if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
+    await User.create({ username, password, assignedRoom: assignedRoom || 'room-1', role: role || 'user' });
+    res.json({ success: true, message: 'បង្កើត User ជោគជ័យ!' });
+  } catch (err) { 
+    console.error('Create user error:', err);
+    res.status(500).json({ message: 'Error creating user' }); 
+  }
+};
+
+app.post('/api/create-user', handleCreateUser);
+app.post('/api/users/create', handleCreateUser);
+
+app.delete('/api/users/:id', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (user && (user.role === 'admin' || user.role === 'supervisor')) {
+      return res.status(400).json({ message: 'មិនអាចលុប Admin ឬ Supervisor បានទេ!' });
+    }
+    await User.findByIdAndDelete(req.params.id); 
+    res.json({ success: true, message: 'លុប User រួចរាល់!' });
+  } catch (err) { 
+    console.error('Delete user error:', err);
+    res.status(500).json({ message: 'Error deleting user' }); 
+  }
+});
+
+app.put('/api/users/:id/reset-password', async (req, res) => {
+  try { 
+    const user = await User.findById(req.params.id);
+    if (user && user.role === 'admin') {
+      return res.status(400).json({ message: 'មិនអាចប្តូរលេខសម្ងាត់ Admin បានទេ!' });
+    }
+    if (!req.body.newPassword || req.body.newPassword.length < 4) {
+      return res.status(400).json({ message: 'ពាក្យសម្ងាត់ត្រូវមានយ៉ាងតិច ៤ តួ!' });
+    }
+    await User.findByIdAndUpdate(req.params.id, { password: req.body.newPassword }); 
+    res.json({ success: true, message: 'ប្តូរ Password ជោគជ័យ!' }); 
+  } catch (err) { 
+    console.error('Reset password error:', err);
+    res.status(500).json({ message: 'Error updating password' }); 
+  }
+});
+
+app.put('/api/users/:id/toggle-block', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'មិនឃើញ User នេះទេ!' });
+    if (user.role === 'admin' || user.role === 'supervisor') {
+      return res.status(400).json({ message: 'មិនអាច Block Admin ឬ Supervisor បានទេ!' });
+    }
+    user.isBlocked = !user.isBlocked; 
+    await user.save(); 
+    res.json({ success: true, message: 'ប្តូរស្ថានភាពរួចរាល់!' });
+  } catch (err) { 
+    console.error('Toggle block error:', err);
+    res.status(500).json({ message: 'Error updating status' }); 
+  }
+});
+
+app.put('/api/users/:id/edit-room', async (req, res) => {
+  try { 
+    await User.findByIdAndUpdate(req.params.id, { assignedRoom: req.body.newRoom }); 
+    res.json({ success: true, message: 'ប្តូរបន្ទប់រួចរាល់!' }); 
+  } catch (err) { 
+    console.error('Edit room error:', err);
+    res.status(500).json({ message: 'Error updating room' }); 
+  }
+});
+
+app.put('/api/users/:id/edit-role', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'មិនឃើញ User នេះទេ!' });
+    if (user.role === 'admin') {
+      return res.status(400).json({ message: 'មិនអាចប្តូរ Role របស់ Admin បានទេ!' });
+    }
+    const { newRole } = req.body;
+    if (!['admin', 'supervisor', 'user'].includes(newRole)) {
+      return res.status(400).json({ message: 'Role មិនត្រឹមត្រូវទេ!' });
+    }
+    user.role = newRole;
+    await user.save();
+    res.json({ success: true, message: 'ប្តូរ Role ជោគជ័យ!' });
+  } catch (err) { 
+    console.error('Edit role error:', err);
+    res.status(500).json({ message: 'Error updating role' }); 
+  }
+});
+
+const handleCreateRoom = async (req, res) => {
+  const roomId = req.body.roomId || req.body.roomName;
+  if (!roomId) return res.status(400).json({ message: 'សូមបញ្ចូលឈ្មោះបន្ទប់!' });
+  try {
+    const exists = await Room.findOne({ roomId });
+    if (exists) return res.status(400).json({ message: 'បន្ទប់នេះមានរួចហើយ!' });
+    await Room.create({ roomId }); 
+    res.json({ success: true, message: 'បង្កើតបន្ទប់ជោគជ័យ!' });
+  } catch (err) { 
+    console.error('Create room error:', err);
+    res.status(500).json({ message: 'Error creating room' }); 
+  }
+};
+
+app.post('/api/create-room', handleCreateRoom);
+app.post('/api/rooms/create', handleCreateRoom);
+
+app.get('/api/rooms-status', async (req, res) => {
+  try {
+    const rooms = await Room.find();
+    const roomsData = rooms.map(r => ({
+      roomId: r.roomId,
+      userCount: roomUsers[r.roomId] ? roomUsers[r.roomId].length : 0,
+      users: roomUsers[r.roomId] ? roomUsers[r.roomId].map(u => u.username) : []
+    }));
+    res.json({ rooms: roomsData });
+  } catch (err) { 
+    console.error('Rooms status error:', err);
+    res.status(500).json({ message: 'Error fetching status' }); 
+  }
+});
+
+app.get('/api/rooms', async (req, res) => {
+  try { 
+    const rooms = await Room.find(); 
+    res.json({ rooms: rooms.map(r => r.roomId) }); 
+  } catch (err) { 
+    console.error('Get rooms error:', err);
+    res.status(500).json({ message: 'Error fetching rooms' }); 
+  }
+});
+
+// ========== Remote Control APIs ==========
+app.post('/api/remote-control/request', async (req, res) => {
+  const { controllerId, targetId, roomId } = req.body;
+  try {
+    const existing = await RemoteControl.findOne({ controllerId, targetId, status: { $in: ['pending', 'approved', 'active'] } });
+    if (existing) return res.status(400).json({ message: 'សំណើរកំពុងដំណើរការរួចហើយ!' });
+    const request = await RemoteControl.create({ controllerId, targetId, roomId, status: 'pending' });
+    io.to(roomId).emit('remote-control-request', { requestId: request._id, controllerId, targetId, roomId });
+    res.json({ success: true, requestId: request._id });
+  } catch (err) { 
+    console.error('Remote control request error:', err);
+    res.status(500).json({ message: 'Error requesting remote control' }); 
+  }
+});
+
+app.post('/api/remote-control/approve', async (req, res) => {
+  const { requestId } = req.body;
+  try {
+    const request = await RemoteControl.findByIdAndUpdate(requestId, { status: 'approved' }, { new: true });
+    if (!request) return res.status(404).json({ message: 'សំណើរមិនមានទេ!' });
+    io.to(request.roomId).emit('remote-control-approved', { requestId: request._id, controllerId: request.controllerId, targetId: request.targetId });
+    res.json({ success: true });
+  } catch (err) { 
+    console.error('Remote control approve error:', err);
+    res.status(500).json({ message: 'Error approving remote control' }); 
+  }
+});
+
+app.post('/api/remote-control/reject', async (req, res) => {
+  const { requestId } = req.body;
+  try {
+    const request = await RemoteControl.findByIdAndUpdate(requestId, { status: 'rejected' }, { new: true });
+    if (!request) return res.status(404).json({ message: 'សំណើរមិនមានទេ!' });
+    io.to(request.roomId).emit('remote-control-rejected', { requestId: request._id, controllerId: request.controllerId, targetId: request.targetId });
+    res.json({ success: true });
+  } catch (err) { 
+    console.error('Remote control reject error:', err);
+    res.status(500).json({ message: 'Error rejecting remote control' }); 
+  }
+});
+
+app.post('/api/remote-control/end', async (req, res) => {
+  const { controllerId, targetId } = req.body;
+  try {
+    const request = await RemoteControl.findOneAndUpdate(
+      { controllerId, targetId, status: { $in: ['approved', 'active'] } },
+      { status: 'ended' },
+      { new: true }
+    );
+    if (request) {
+      io.to(request.roomId).emit('remote-control-ended', { controllerId, targetId });
+    }
+    res.json({ success: true });
+  } catch (err) { 
+    console.error('Remote control end error:', err);
+    res.status(500).json({ message: 'Error ending remote control' }); 
+  }
+});
+
+// ========== Socket.io Logic - FIXED ==========
 io.on('connection', (socket) => {
-  
+  console.log('🔌 Socket connected:', socket.id);
+
   socket.on('join-room', (data) => {
-    const { roomId, peerId, username, deviceId } = data;
+    let roomId, peerId, username;
+
+    if (typeof data === 'object' && data !== null) {
+      roomId = data.roomId;
+      peerId = data.peerId;
+      username = data.username;
+    } else {
+      roomId = data;
+      peerId = arguments[1];
+      username = arguments[2];
+    }
+
+    if (!roomId || !peerId) {
+      console.log('❌ Missing roomId or peerId');
+      return;
+    }
+
+    console.log(`📥 ${username} (${peerId}) joining room: ${roomId}`);
     socket.join(roomId);
+    socket.data.roomId = roomId;
+    socket.data.peerId = peerId;
+    socket.data.username = username;
 
-    socketUserMap[socket.id] = { username, peerId, roomId, deviceId };
+    activeSockets.set(socket.id, { username, roomId, peerId });
 
-    if (!userSessions[username]) userSessions[username] = {};
-    if (deviceId) userSessions[username][deviceId] = socket.id;
+    if (!roomUsers[roomId]) roomUsers[roomId] = [];
+    roomUsers[roomId] = roomUsers[roomId].filter(u => u.peerId !== peerId);
 
-    // ផ្ញើបញ្ជីអ្នកនៅក្នុង Room ទៅកាន់អ្នកចូលថ្មី
-    const clients = Array.from(io.sockets.adapter.rooms.get(roomId) || []);
-    const existingUsers = clients
-      .filter(id => id !== socket.id && socketUserMap[id])
-      .map(id => ({ peerId: socketUserMap[id].peerId, username: socketUserMap[id].username }));
+    const existingUsers = [...roomUsers[roomId]];
+    roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
-    socket.emit('room-joined', { roomId, existingUsers });
+    // ផ្ញើអ្នកប្រើដែលមានរួចហើយ
+    const existingUsersData = existingUsers.map(u => ({ peerId: u.peerId, username: u.username }));
+    socket.emit('room-joined', { roomId, existingUsers: existingUsersData });
+    socket.emit('existing-users', existingUsersData);
+    
+    // ជូនដំណឹងដល់អ្នកដទៃ
     socket.to(roomId).emit('user-joined', { peerId, username });
+    io.to(roomId).emit('play-sound', 'join');
+    io.emit('rooms-update');
+  });
+
+  socket.on('leave-room', (data) => {
+    const roomId = (data && data.roomId) ? data.roomId : socket.data.roomId;
+    const peerId = (data && data.peerId) ? data.peerId : socket.data.peerId;
+    
+    console.log(`🚪 ${peerId} leaving room: ${roomId}`);
+    
+    if (roomId && roomUsers[roomId]) {
+      roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
+      socket.to(roomId).emit('user-left', { peerId });
+      io.to(roomId).emit('play-sound', 'leave');
+      if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
+    }
+    socket.leave(roomId);
+    // ✅ FIX: លុប socket ចេញពី activeSockets ភ្លាមៗពេល leave-room
+    // ដើម្បីកុំឲ្យ 2FA logic គិតថា user នេះនៅ Online
+    activeSockets.delete(socket.id);
+    io.emit('rooms-update');
   });
 
   socket.on('send-private-message', (data) => {
-    const targetSocketId = Object.keys(socketUserMap).find(id => socketUserMap[id].peerId === data.toPeerId);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('receive-private-message', {
-        fromPeerId: socketUserMap[socket.id]?.peerId,
-        fromUsername: data.fromUsername,
-        message: data.message
-      });
+    const { targetPeerId, message, fromUsername } = data;
+    const roomId = socket.data.roomId;
+    
+    console.log(`💬 Message from ${fromUsername} to ${targetPeerId}: ${message}`);
+    
+    if (roomId && roomUsers[roomId]) {
+      const targetUser = roomUsers[roomId].find(u => u.peerId === targetPeerId);
+      if (targetUser) {
+        io.to(targetUser.socketId).emit('receive-private-message', {
+          fromPeerId: socket.data.peerId,
+          fromUsername: fromUsername || socket.data.username,
+          message: message
+        });
+      }
     }
   });
 
-  // REMOTE CONTROL PASSTHROUGH
-  socket.on('request-remote-control', (data) => {
-    const targetSocketId = Object.keys(socketUserMap).find(id => socketUserMap[id].peerId === data.targetId);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('remote-control-request', { controllerId: data.controllerId, requestId: socket.id });
+  // Remote Control Events
+  socket.on('remote-mouse-move', ({ targetId, x, y }) => {
+    const roomId = socket.data.roomId;
+    if (roomId && roomUsers[roomId]) {
+      const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
+      if (targetUser) socket.to(targetUser.socketId).emit('remote-mouse-move', { x, y });
     }
   });
 
-  socket.on('remote-mouse-move', (data) => {
-    const targetSocketId = Object.keys(socketUserMap).find(id => socketUserMap[id].peerId === data.targetId);
-    if (targetSocketId) io.to(targetSocketId).emit('remote-mouse-move', data);
+  socket.on('remote-mouse-click', ({ targetId, x, y }) => {
+    const roomId = socket.data.roomId;
+    if (roomId && roomUsers[roomId]) {
+      const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
+      if (targetUser) socket.to(targetUser.socketId).emit('remote-mouse-click', { x, y });
+    }
   });
 
-  socket.on('remote-mouse-click', (data) => {
-    const targetSocketId = Object.keys(socketUserMap).find(id => socketUserMap[id].peerId === data.targetId);
-    if (targetSocketId) io.to(targetSocketId).emit('remote-mouse-click', data);
+  socket.on('remote-keyboard', ({ targetId, key }) => {
+    const roomId = socket.data.roomId;
+    if (roomId && roomUsers[roomId]) {
+      const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
+      if (targetUser) socket.to(targetUser.socketId).emit('remote-keyboard', { key });
+    }
   });
 
   socket.on('disconnect', () => {
-    const userData = socketUserMap[socket.id];
-    if (userData) {
-      const { username, peerId, roomId, deviceId } = userData;
-      socket.to(roomId).emit('user-left', { peerId });
-
-      if (userSessions[username] && deviceId) {
-        delete userSessions[username][deviceId];
-        if (Object.keys(userSessions[username]).length === 0) delete userSessions[username];
+    console.log('🔌 Socket disconnected:', socket.id);
+    activeSockets.delete(socket.id);
+    
+    const roomId = socket.data.roomId;
+    const peerId = socket.data.peerId;
+    
+    if (roomId && roomUsers[roomId]) {
+      roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
+      if (peerId) {
+        socket.to(roomId).emit('user-left', { peerId });
+        io.to(roomId).emit('play-sound', 'leave');
       }
-      delete socketUserMap[socket.id];
+      if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
     }
+    io.emit('rooms-update');
   });
 });
 
+// ✅ FIX: សម្អាត ghost entries ក្នុង activeSockets ជាទៀងទាត់
+// (ករណី socket ដាច់ដោយមិន fire disconnect event ស្អាត - Render/network glitch)
+setInterval(() => {
+  for (let [sId] of activeSockets.entries()) {
+    if (!io.sockets.sockets.has(sId)) {
+      activeSockets.delete(sId);
+    }
+  }
+}, 30000);
+
+// Keep-alive for Render
+setInterval(() => {
+  const https = require('https');
+  const hostname = process.env.RENDER_EXTERNAL_HOSTNAME || 'meeting-mu6x.onrender.com';
+  https.get(`https://${hostname}/ping`, () => {}).on('error', () => {});
+}, 60000);
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`✅ Socket.IO using polling transport only`);
+  console.log(`✅ PeerJS Server running on /peerjs`);
+});
