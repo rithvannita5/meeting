@@ -26,7 +26,7 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
     credentials: true
   },
-  transports: ['polling'],  // ប្រើ Polling តែប៉ុណ្ណោះ
+  transports: ['polling'],
   allowUpgrades: false,
   pingTimeout: 60000,
   pingInterval: 25000,
@@ -43,57 +43,10 @@ io.engine.on("connection_error", (err) => {
 // ========== Base Routes ==========
 app.get('/ping', (req, res) => res.send('pong'));
 
-// ========== TURN Credentials (Cloudflare Realtime) ==========
-// ✅ FIX: the browser console showed ICE gathering only "host" and "srflx"
-// candidates — never a "relay" one — which is why the ICE connection state
-// went checking -> disconnected: the static openrelay.metered.ca TURN
-// credentials are not producing working relay candidates anymore for these
-// two users' networks, so any pair where STUN alone isn't enough (symmetric
-// NAT, strict firewall, one side on mobile data, etc.) can never connect.
-//
-// This endpoint issues short-lived TURN credentials from Cloudflare Realtime
-// (generous free tier, very reliable) if you configure TURN_KEY_ID and
-// TURN_KEY_API_TOKEN as Render environment variables. Get them free at:
-// https://dash.cloudflare.com -> Realtime -> TURN -> Create a TURN key
-// If the env vars aren't set, this endpoint just returns null and the
-// client silently falls back to the static STUN/TURN list in script.js.
-const TURN_KEY_ID = process.env.TURN_KEY_ID;
-const TURN_KEY_API_TOKEN = process.env.TURN_KEY_API_TOKEN;
-
-app.get('/api/turn-credentials', async (req, res) => {
-  if (!TURN_KEY_ID || !TURN_KEY_API_TOKEN) {
-    return res.json({ iceServers: null });
-  }
-  try {
-    const cfRes = await fetch(
-      `https://rtc.live.cloudflare.com/v1/turn/keys/${TURN_KEY_ID}/credentials/generate-ice-servers`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${TURN_KEY_API_TOKEN}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ ttl: 86400 })
-      }
-    );
-    if (!cfRes.ok) {
-      console.error('❌ Cloudflare TURN credential error:', cfRes.status, await cfRes.text());
-      return res.json({ iceServers: null });
-    }
-    const data = await cfRes.json();
-    res.json({ iceServers: data.iceServers || null });
-  } catch (err) {
-    console.error('❌ TURN credentials fetch failed:', err);
-    res.json({ iceServers: null });
-  }
-});
-
 // ========== MongoDB Atlas Config ==========
-// ⚠️ សូមប្តូរ Password Database ជាបន្ទាន់ ហើយដាក់តម្លៃថ្មីនៅក្នុង Environment
-// Variable MONGO_URI នៅលើ Render (កុំដាក់ hardcode ក្នុង code ទៀត)
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) {
-  console.error('❌ MONGO_URI environment variable មិនត្រូវបានកំណត់ទេ! សូមកំណត់វានៅក្នុង Render Environment Variables.');
+  console.error('❌ MONGO_URI environment variable មិនត្រូវបានកំណត់ទេ!');
 }
 
 const userSchema = new mongoose.Schema({
@@ -147,19 +100,18 @@ app.post('/api/login', async (req, res) => {
     if (!user) return res.status(401).json({ success: false, message: 'ឈ្មោះ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ!' });
     if (user.isBlocked) return res.status(403).json({ success: false, message: 'គណនីត្រូវបានផ្អាក!' });
 
-    if (user.role !== 'admin' && user.role !== 'supervisor' && user.assignedRoom !== roomId) {
+    // ✅ FIX: Admin និង Supervisor អាចចូលបន្ទប់ទាំងអស់
+    const isAdminOrSupervisor = user.role === 'admin' || user.role === 'supervisor';
+    if (!isAdminOrSupervisor && user.assignedRoom !== roomId) {
       return res.status(403).json({ success: false, message: `អ្នកគ្មានសិទ្ធិចូលបន្ទប់ ${roomId} ទេ!` });
     }
 
-    // ✅ FIX: ត្រួតពិនិត្យ socket ថាមានវត្តមានពិតប្រាកដ (មិនមែន ghost session ដែលចាស់ជាប់
-    // ក្នុង Map ដោយសារ disconnect មិនស្អាត) មុននឹងចាត់ទុកថា user កំពុង Online នៅ device ផ្សេង
     let onlineSockets = [];
     for (let [sId, data] of activeSockets.entries()) {
       if (data.username === username) {
         if (io.sockets.sockets.has(sId)) {
           onlineSockets.push(sId);
         } else {
-          // socket នេះលែងមានវត្តមានក្នុង io ទៀតហើយ (ghost) - លុបចោល
           activeSockets.delete(sId);
         }
       }
@@ -415,7 +367,7 @@ app.post('/api/remote-control/end', async (req, res) => {
   }
 });
 
-// ========== Socket.io Logic - FIXED ==========
+// ========== Socket.io Logic ==========
 io.on('connection', (socket) => {
   console.log('🔌 Socket connected:', socket.id);
 
@@ -451,12 +403,10 @@ io.on('connection', (socket) => {
     const existingUsers = [...roomUsers[roomId]];
     roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
-    // ផ្ញើអ្នកប្រើដែលមានរួចហើយ
     const existingUsersData = existingUsers.map(u => ({ peerId: u.peerId, username: u.username }));
     socket.emit('room-joined', { roomId, existingUsers: existingUsersData });
     socket.emit('existing-users', existingUsersData);
     
-    // ជូនដំណឹងដល់អ្នកដទៃ
     socket.to(roomId).emit('user-joined', { peerId, username });
     io.to(roomId).emit('play-sound', 'join');
     io.emit('rooms-update');
@@ -475,8 +425,6 @@ io.on('connection', (socket) => {
       if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
     }
     socket.leave(roomId);
-    // ✅ FIX: លុប socket ចេញពី activeSockets ភ្លាមៗពេល leave-room
-    // ដើម្បីកុំឲ្យ 2FA logic គិតថា user នេះនៅ Online
     activeSockets.delete(socket.id);
     io.emit('rooms-update');
   });
@@ -543,8 +491,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// ✅ FIX: សម្អាត ghost entries ក្នុង activeSockets ជាទៀងទាត់
-// (ករណី socket ដាច់ដោយមិន fire disconnect event ស្អាត - Render/network glitch)
+// Cleanup ghost entries
 setInterval(() => {
   for (let [sId] of activeSockets.entries()) {
     if (!io.sockets.sockets.has(sId)) {
