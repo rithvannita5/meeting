@@ -660,60 +660,18 @@ function attachIceDiagnostics(call, peerId, label) {
 // INIT PEERJS WITH CLOUDFLARE TURN - FIXED
 // ============================================================
 async function initPeerJS() {
-  // ✅ FIX: ការពារការដំឡើង Peer ច្រើនដង
   if (peerInitialized) {
     console.log('⚠️ PeerJS already initialized');
     return;
   }
 
-  // ✅ FIX: រង់ចាំ Socket ភ្ជាប់មុន
-  if (!socketConnected) {
-    console.log('⏳ Waiting for socket connection...');
-    await new Promise((resolve) => {
-      const checkSocket = setInterval(() => {
-        if (socketConnected) {
-          clearInterval(checkSocket);
-          resolve();
-        }
-      }, 500);
-      setTimeout(() => {
-        clearInterval(checkSocket);
-        resolve();
-      }, 10000);
-    });
-  }
-
+  // ✅ FIX: ប្រើ fallback ភ្លាមៗ មិនរង់ចាំ Socket
   try {
-    console.log('🔄 Fetching Cloudflare TURN credentials...');
+    console.log('🔄 Initializing PeerJS with fallback TURN servers...');
     
-    // ✅ FIX: បន្ថែម timeout សម្រាប់ fetch
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    
-    const response = await fetch('/api/turn-credentials', {
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    
-    const data = await response.json();
-    
-    let iceServers = ICE_SERVERS_FALLBACK;
-    
-    if (data.iceServers && data.iceServers.length > 0) {
-      console.log('✅ Using Cloudflare TURN servers');
-      iceServers = data.iceServers;
-      iceServers.push({ urls: 'stun:stun.cloudflare.com:3478' });
-      iceServers.push({ urls: 'stun:stun.l.google.com:19302' });
-    } else {
-      console.log('⚠️ Using fallback TURN servers');
-      showToast('⚠️ Using fallback TURN servers', 'warning');
-    }
-
     const isSecure = window.location.protocol === 'https:';
     const hostname = window.location.hostname;
     const port = isSecure ? 443 : (window.location.port || 80);
-    
-    console.log(`🔧 Creating PeerJS with host: ${hostname}, port: ${port}, secure: ${isSecure}`);
     
     myPeer = new Peer(undefined, {
       host: hostname,
@@ -722,13 +680,60 @@ async function initPeerJS() {
       secure: isSecure,
       debug: 2,
       config: {
-        iceServers: iceServers,
+        iceServers: ICE_SERVERS_FALLBACK,
         iceTransportPolicy: 'all'
       }
     });
 
     peerInitialized = true;
 
+    myPeer.on('open', function(id) {
+      myId = id;
+      console.log('✅ PeerJS Connected with ID:', myId);
+      
+      if (socket && socketConnected && currentRoomId && myUsername) {
+        socket.emit('join-room', {
+          roomId: currentRoomId,
+          peerId: myId,
+          username: myUsername
+        });
+      }
+    });
+
+    // ✅ FIX: ការពារ PeerJS error មិនឲ្យបែកកម្មវិធី
+    myPeer.on('error', function(err) {
+      console.error('❌ PeerJS Error:', err);
+      // មិនឲ្យ showToast ច្រើនពេក
+    });
+
+    myPeer.on('disconnected', function() {
+      console.log('🔌 PeerJS disconnected');
+      if (myPeer && !myPeer.destroyed) {
+        setTimeout(function() {
+          if (myPeer && !myPeer.destroyed) {
+            myPeer.reconnect();
+          }
+        }, 3000);
+      }
+    });
+
+    // ✅ FIX: បន្ថែម call handler
+    myPeer.on('call', function(call) {
+      console.log('📞 Incoming call from:', call.peer);
+      if (localStream) {
+        call.answer(localStream);
+      } else {
+        initDummyStream();
+        call.answer(localStream);
+      }
+      // ... rest of call handling
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to initialize PeerJS:', error);
+    showToast('❌ មិនអាចភ្ជាប់ Peer Server បានទេ!', 'error');
+  }
+}
     // ===== PeerJS Events =====
     myPeer.on('open', function(id) {
       myId = id;
