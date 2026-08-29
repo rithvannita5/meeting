@@ -113,6 +113,7 @@ function connectSocket() {
   // ============================================================
   socket.on('rooms-update', function() {
     if ((currentUserRole === 'admin' || currentUserRole === 'supervisor') && 
+        document.getElementById('admin-dashboard') &&
         !document.getElementById('admin-dashboard').classList.contains('hidden')) {
       loadAdminRoomMonitor();
     }
@@ -287,7 +288,7 @@ function connectSocket() {
       updateUserCount();
       updateChatUserList();
 
-      if (isScreenSharing && screenStream) {
+      if (isScreenSharing && screenStream && myPeer) {
         setTimeout(function() {
           myPeer.call(peerId, screenStream, { metadata: { type: 'screen', username: myUsername } });
         }, 1200);
@@ -758,6 +759,9 @@ async function loadUsersTable() {
   }
 }
 
+// ============================================================
+// ADMIN JOIN ROOM (FIXED)
+// ============================================================
 function adminJoinRoom(roomId) {
   currentRoomId = roomId;
 
@@ -777,7 +781,6 @@ function adminJoinRoom(roomId) {
   initDummyStream();
 
   if (myPeer && myPeer.id) {
-    // ប្រសិនបើ Peer ភ្ជាប់រួចហើយ ផ្ញើសារ Join Room ទៅ Socket ភ្លាមៗ
     myId = myPeer.id;
     socket.emit('join-room', {
       roomId: currentRoomId,
@@ -785,12 +788,38 @@ function adminJoinRoom(roomId) {
       username: myUsername
     });
   } else {
-    // ប្រសិនបើមិនទាន់ភ្ជាប់ PeerJS ទេ ឱ្យវាតភ្ជាប់ឡើងវិញ
     initPeerJS();
   }
 
   showToast('🚪 បានចូលរួមបន្ទប់៖ ' + currentRoomId, 'success');
 }
+
+// ============================================================
+// ADMIN LOGOUT (FIXED & BOTH NAMES)
+// ============================================================
+function logoutAdmin() {
+  if (confirm('តើអ្នកប្រាកដថាចង់ចាកចេញពី Admin Dashboard ទេ?')) {
+    if (socket && socketConnected) {
+      socket.emit('logout');
+    }
+    showToast('👋 បានចាកចេញដោយជោគជ័យ!', 'info');
+
+    myUsername = '';
+    currentUserRole = '';
+    currentRoomId = '';
+    pendingLoginData = null;
+
+    setTimeout(function() {
+      window.location.reload();
+    }, 500);
+  }
+}
+
+// Alias name to prevent error if HTML calls adminLogout
+function adminLogout() {
+  logoutAdmin();
+}
+
 // ============================================================
 // ADMIN CRUD OPERATIONS
 // ============================================================
@@ -915,7 +944,7 @@ async function createNewRoom() {
 }
 
 // ============================================================
-// AUTHENTICATION & LOGIN (FULL IMPLEMENTATION)
+// AUTHENTICATION & LOGIN
 // ============================================================
 async function login() {
   var username = document.getElementById('username').value.trim();
@@ -1007,7 +1036,7 @@ function finalizeLogin(data) {
 }
 
 // ============================================================
-// MEETING & WEBRTC (CROSS-NETWORK CONFIGURATION)
+// MEETING & WEBRTC (CROSS-NETWORK STUN CONFIG)
 // ============================================================
 function startMeeting() {
   var meetingContainer = document.getElementById('meeting-container');
@@ -1051,7 +1080,7 @@ function initDummyStream() {
 }
 
 function initPeerJS() {
-  // Configured with Google Public STUN Servers for Cross-Network WebRTC connection
+  // Google STUN Servers configured for cross-network WebRTC streaming
   myPeer = new Peer(undefined, {
     config: {
       iceServers: [
@@ -1182,7 +1211,6 @@ async function toggleCamera() {
 
       if (localVideo) localVideo.srcObject = localStream;
       
-      // Update track for all connected peers
       for (let pId in peerCalls) {
         const sender = peerCalls[pId].peerConnection.getSenders().find(s => s.track.kind === 'video');
         if (sender && videoTrack) sender.replaceTrack(videoTrack);
@@ -1213,9 +1241,8 @@ async function toggleScreenShare() {
       isScreenSharing = true;
       if (btn) btn.classList.add('active');
 
-      // Call all active users with the screen stream
       for (let pId in userNamesMap) {
-        if (pId !== myId) {
+        if (pId !== myId && myPeer) {
           myPeer.call(pId, screenStream, { metadata: { type: 'screen', username: myUsername } });
         }
       }
@@ -1321,27 +1348,3 @@ window.addEventListener('DOMContentLoaded', function() {
   connectSocket();
   loadRooms();
 });
-
-// ============================================================
-// ADMIN LOGOUT FUNCTION
-// ============================================================
-function logoutAdmin() {
-  if (confirm('តើអ្នកប្រាកដថាចង់ចាកចេញពី Admin Dashboard ទេ?')) {
-    if (socket && socketConnected) {
-      socket.emit('logout');
-    }
-    
-    showToast('👋 បានចាកចេញដោយជោគជ័យ!', 'info');
-
-    // Reset Variables ទាំងអស់
-    myUsername = '';
-    currentUserRole = '';
-    currentRoomId = '';
-    pendingLoginData = null;
-
-    // Reload Page ដើម្បីត្រឡប់ទៅកាន់ទំព័រ Login វិញ
-    setTimeout(function() {
-      window.location.reload();
-    }, 500);
-  }
-}
