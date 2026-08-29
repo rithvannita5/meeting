@@ -4,6 +4,7 @@
 let socket = null;
 let socketConnected = false;
 let connectionAttempts = 0;
+let peerInitialized = false;
 
 // ============================================================
 // PEER & STREAM VARIABLES
@@ -49,7 +50,7 @@ let isBeingControlled = false;
 let remotePointer = null;
 
 // ============================================================
-// FALLBACK ICE SERVERS (ប្រើបើ Cloudflare មិនដំណើរការ)
+// FALLBACK ICE SERVERS
 // ============================================================
 const ICE_SERVERS_FALLBACK = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -68,24 +69,19 @@ const ICE_SERVERS_FALLBACK = [
 ];
 
 // ============================================================
-// SOCKET CONNECTION FUNCTION
+// SOCKET CONNECTION FUNCTION - FIXED
 // ============================================================
 function connectSocket() {
-  // ✅ FIX: ប្រើតែ polling transport
   socket = io({
     transports: ['polling'],
     upgrade: false,
     reconnection: true,
-    reconnectionAttempts: 10,
+    reconnectionAttempts: 20,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
     timeout: 60000,
     forceNew: true,
-    path: '/socket.io',
-    // ✅ FIX: បន្ថែម extraHeaders
-    extraHeaders: {
-      'Access-Control-Allow-Origin': '*'
-    }
+    path: '/socket.io'
   });
 
   socket.on('connect_error', function(error) {
@@ -96,7 +92,6 @@ function connectSocket() {
       showToast('⚠️ កំពុងព្យាយាមភ្ជាប់ Server ឡើងវិញ...', 'warning');
       setTimeout(function() {
         if (socket) {
-          socket.close();
           socket.connect();
         }
       }, 3000);
@@ -131,7 +126,6 @@ function connectSocket() {
     }
   });
 
-  // ✅ FIX: បន្ថែម reconnect events
   socket.on('reconnect', function(attemptNumber) {
     console.log('🔄 Socket.IO reconnected after', attemptNumber, 'attempts');
     socketConnected = true;
@@ -160,6 +154,10 @@ function connectSocket() {
   });
 
   // ========== Socket Events ==========
+  socket.on('connection_ack', function(data) {
+    console.log('✅ Connection acknowledged:', data);
+  });
+
   socket.on('room-joined', function(data) {
     console.log('🏠 Joined room:', data.roomId);
     if (data.existingUsers) {
@@ -361,28 +359,6 @@ function connectSocket() {
     }
   });
 }
-
-// script.js - បន្ថែមមុខងារសាកល្បង
-
-function testSocketConnection() {
-  if (socket && socketConnected) {
-    socket.emit('ping', { time: Date.now() }, function(response) {
-      console.log('🏓 Socket ping response:', response);
-      if (response && response.status === 'pong') {
-        console.log('✅ Socket connection is healthy');
-      } else {
-        console.log('⚠️ Socket connection is not responding');
-        // ព្យាយាម reconnect
-        if (socket) {
-          socket.connect();
-        }
-      }
-    });
-  }
-}
-
-// សាកល្បងរៀងរាល់ 30 វិនាទី
-setInterval(testSocketConnection, 30000);
 
 // ============================================================
 // SOUND NOTIFICATION
@@ -702,13 +678,44 @@ function attachIceDiagnostics(call, peerId, label) {
 }
 
 // ============================================================
-// INIT PEERJS WITH CLOUDFLARE TURN
+// INIT PEERJS WITH CLOUDFLARE TURN - FIXED
 // ============================================================
 async function initPeerJS() {
+  // ✅ FIX: ការពារការដំឡើង Peer ច្រើនដង
+  if (peerInitialized) {
+    console.log('⚠️ PeerJS already initialized');
+    return;
+  }
+
+  // ✅ FIX: រង់ចាំ Socket ភ្ជាប់មុន
+  if (!socketConnected) {
+    console.log('⏳ Waiting for socket connection...');
+    await new Promise((resolve) => {
+      const checkSocket = setInterval(() => {
+        if (socketConnected) {
+          clearInterval(checkSocket);
+          resolve();
+        }
+      }, 500);
+      setTimeout(() => {
+        clearInterval(checkSocket);
+        resolve();
+      }, 10000);
+    });
+  }
+
   try {
     console.log('🔄 Fetching Cloudflare TURN credentials...');
     
-    const response = await fetch('/api/turn-credentials');
+    // ✅ FIX: បន្ថែម timeout សម្រាប់ fetch
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    
+    const response = await fetch('/api/turn-credentials', {
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    
     const data = await response.json();
     
     let iceServers = ICE_SERVERS_FALLBACK;
@@ -740,6 +747,8 @@ async function initPeerJS() {
         iceTransportPolicy: 'all'
       }
     });
+
+    peerInitialized = true;
 
     // ===== PeerJS Events =====
     myPeer.on('open', function(id) {
@@ -799,6 +808,7 @@ async function initPeerJS() {
         showToast('⚠️ Signaling server connection issue, retrying...', 'warning');
         setTimeout(function() {
           if (!myPeer || myPeer.destroyed) {
+            peerInitialized = false;
             initPeerJS();
           }
         }, 3000);
@@ -814,6 +824,7 @@ async function initPeerJS() {
           console.log('Reconnect failed:', e);
           setTimeout(function() {
             if (myPeer) myPeer.destroy();
+            peerInitialized = false;
             initPeerJS();
           }, 3000);
         }
@@ -824,6 +835,7 @@ async function initPeerJS() {
     console.error('❌ Failed to initialize PeerJS with Cloudflare TURN:', error);
     showToast('⚠️ Using fallback TURN servers', 'warning');
     
+    // ✅ FIX: Fallback
     try {
       const isSecure = window.location.protocol === 'https:';
       myPeer = new Peer(undefined, {
@@ -836,6 +848,8 @@ async function initPeerJS() {
           iceServers: ICE_SERVERS_FALLBACK
         }
       });
+      
+      peerInitialized = true;
       
       myPeer.on('open', function(id) {
         myId = id;
@@ -1427,7 +1441,25 @@ function startMeeting() {
   }
 
   initDummyStream();
-  initPeerJS();
+  
+  // ✅ FIX: រង់ចាំ Socket ភ្ជាប់មុនពេលដំឡើង Peer
+  if (!socketConnected) {
+    showToast('⏳ កំពុងភ្ជាប់ Server...', 'info');
+    var waitForSocket = setInterval(function() {
+      if (socketConnected) {
+        clearInterval(waitForSocket);
+        initPeerJS();
+      }
+    }, 500);
+    setTimeout(function() {
+      clearInterval(waitForSocket);
+      if (!peerInitialized) {
+        initPeerJS();
+      }
+    }, 10000);
+  } else {
+    initPeerJS();
+  }
 }
 
 function leaveRoom() {
@@ -1454,6 +1486,7 @@ function leaveRoom() {
   if (myPeer) {
     myPeer.destroy();
     myPeer = null;
+    peerInitialized = false;
   }
 
   if (socket && socketConnected) {
@@ -1746,9 +1779,12 @@ window.addEventListener('DOMContentLoaded', function() {
   connectSocket();
   loadRooms();
   
-  document.getElementById('chatInput').addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') {
-      sendPrivateMessage();
-    }
-  });
+  var chatInput = document.getElementById('chatInput');
+  if (chatInput) {
+    chatInput.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        sendPrivateMessage();
+      }
+    });
+  }
 });
