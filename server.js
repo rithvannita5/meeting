@@ -19,6 +19,20 @@ const peerServer = ExpressPeerServer(server, {
 });
 app.use('/peerjs', peerServer);
 
+// server.js - បន្ថែមក្នុង io.on('connection')
+
+socket.on('ping', (data, callback) => {
+  console.log('🏓 Ping received from:', socket.id);
+  if (callback) {
+    callback({ status: 'pong', timestamp: Date.now() });
+  }
+});
+
+// Heartbeat check
+socket.on('heartbeat', () => {
+  // គ្រាន់តែឆ្លើយតប
+});
+
 // ========== Socket.IO Config ==========
 const io = new Server(server, {
   cors: {
