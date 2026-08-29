@@ -118,7 +118,7 @@ const roomUsers = {};
 const activeSockets = new Map();
 const otpStore = {};
 
-// ========== REST APIs ==========
+// ========== REST APIs (AUTHENTICATION & USER) ==========
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
   try {
@@ -175,16 +175,20 @@ app.get('/api/users', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error fetching users' }); }
 });
 
-app.post('/api/create-user', async (req, res) => {
+// 支持ទាំង /api/create-user និង /api/users/create
+const handleCreateUser = async (req, res) => {
   const { username, password, assignedRoom, role } = req.body;
-  if (!username || !password || !assignedRoom) return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់!' });
+  if (!username || !password) return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់!' });
   try {
     const exists = await User.findOne({ username });
     if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
-    await User.create({ username, password, assignedRoom, role: role || 'user' });
+    await User.create({ username, password, assignedRoom: assignedRoom || 'room-1', role: role || 'user' });
     res.json({ success: true, message: 'បង្កើត User ជោគជ័យ!' });
   } catch (err) { res.status(500).json({ message: 'Error creating user' }); }
-});
+};
+
+app.post('/api/create-user', handleCreateUser);
+app.post('/api/users/create', handleCreateUser);
 
 app.delete('/api/users/:id', async (req, res) => {
   try {
@@ -242,8 +246,9 @@ app.put('/api/users/:id/edit-role', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error updating role' }); }
 });
 
-app.post('/api/create-room', async (req, res) => {
-  const { roomId } = req.body;
+// ========== REST APIs (ROOMS) ==========
+const handleCreateRoom = async (req, res) => {
+  const roomId = req.body.roomId || req.body.roomName;
   if (!roomId) return res.status(400).json({ message: 'សូមបញ្ចូលឈ្មោះបន្ទប់!' });
   try {
     const exists = await Room.findOne({ roomId });
@@ -251,7 +256,10 @@ app.post('/api/create-room', async (req, res) => {
     await Room.create({ roomId }); 
     res.json({ success: true, message: 'បង្កើតបន្ទប់ជោគជ័យ!' });
   } catch (err) { res.status(500).json({ message: 'Error creating room' }); }
-});
+};
+
+app.post('/api/create-room', handleCreateRoom);
+app.post('/api/rooms/create', handleCreateRoom);
 
 app.get('/api/rooms-status', async (req, res) => {
   try {
@@ -325,7 +333,22 @@ io.on('connection', (socket) => {
     socket.join('admin-room');
   });
 
-  socket.on('join-room', (roomId, peerId, username) => {
+  // ទទួលយក payload ជា Object ឬ Multiple Args ដើម្បើសុវត្ថិភាព
+  socket.on('join-room', (data, peerIdArg, usernameArg) => {
+    let roomId, peerId, username;
+
+    if (typeof data === 'object' && data !== null) {
+      roomId = data.roomId;
+      peerId = data.peerId;
+      username = data.username;
+    } else {
+      roomId = data;
+      peerId = peerIdArg;
+      username = usernameArg;
+    }
+
+    if (!roomId || !peerId) return;
+
     socket.join(roomId);
     socket.data.roomId = roomId;
     socket.data.peerId = peerId;
@@ -339,40 +362,64 @@ io.on('connection', (socket) => {
     const existingUsers = [...roomUsers[roomId]];
     roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
-    socket.emit('existing-users', existingUsers);
+    // ផ្ញើ 'room-joined' ត្រឡប់ទៅ Frontend
+    socket.emit('room-joined', { roomId, existingUsers });
+    
+    // ប្រកាសប្រាប់អ្នកផ្សេងក្នុងបន្ទប់
     socket.to(roomId).emit('user-joined', { peerId, username });
     io.to(roomId).emit('play-sound', 'join');
-    io.to('admin-room').emit('rooms-update');
+    io.emit('rooms-update');
 
     socket.on('disconnect', () => {
       activeSockets.delete(socket.id);
       if (roomUsers[roomId]) {
         roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
-        socket.to(roomId).emit('user-left', socket.data.peerId);
+        socket.to(roomId).emit('user-left', { peerId: socket.data.peerId });
         io.to(roomId).emit('play-sound', 'leave');
         if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
       }
-      io.to('admin-room').emit('rooms-update');
+      io.emit('rooms-update');
     });
   });
 
-  socket.on('private-message', ({ toPeerId, message }) => {
+  socket.on('leave-room', (data) => {
+    const roomId = (data && data.roomId) ? data.roomId : socket.data.roomId;
+    const peerId = (data && data.peerId) ? data.peerId : socket.data.peerId;
+    
+    if (roomId && roomUsers[roomId]) {
+      roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
+      socket.to(roomId).emit('user-left', { peerId });
+      io.to(roomId).emit('play-sound', 'leave');
+      if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
+    }
+    socket.leave(roomId);
+    io.emit('rooms-update');
+  });
+
+  // Private Messages - ទទួលយក send-private-message និង private-message
+  const handlePrivateMessage = ({ targetPeerId, toPeerId, message, fromUsername }) => {
+    const destPeerId = targetPeerId || toPeerId;
     const roomId = socket.data.roomId;
-    if (roomUsers[roomId]) {
-      const targetUser = roomUsers[roomId].find(u => u.peerId === toPeerId);
+    
+    if (roomId && roomUsers[roomId]) {
+      const targetUser = roomUsers[roomId].find(u => u.peerId === destPeerId);
       if (targetUser) {
-        socket.to(targetUser.socketId).emit('receive-private-message', {
+        io.to(targetUser.socketId).emit('receive-private-message', {
           fromPeerId: socket.data.peerId,
-          fromUsername: socket.data.username,
+          fromUsername: fromUsername || socket.data.username,
           message
         });
       }
     }
-  });
+  };
 
+  socket.on('send-private-message', handlePrivateMessage);
+  socket.on('private-message', handlePrivateMessage);
+
+  // Remote Control Pass-through Events
   socket.on('remote-mouse-move', ({ targetId, x, y }) => {
     const roomId = socket.data.roomId;
-    if (roomUsers[roomId]) {
+    if (roomId && roomUsers[roomId]) {
       const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
       if (targetUser) socket.to(targetUser.socketId).emit('remote-mouse-move', { x, y });
     }
@@ -380,7 +427,7 @@ io.on('connection', (socket) => {
 
   socket.on('remote-mouse-click', ({ targetId, x, y }) => {
     const roomId = socket.data.roomId;
-    if (roomUsers[roomId]) {
+    if (roomId && roomUsers[roomId]) {
       const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
       if (targetUser) socket.to(targetUser.socketId).emit('remote-mouse-click', { x, y });
     }
@@ -388,7 +435,7 @@ io.on('connection', (socket) => {
 
   socket.on('remote-keyboard', ({ targetId, key }) => {
     const roomId = socket.data.roomId;
-    if (roomUsers[roomId]) {
+    if (roomId && roomUsers[roomId]) {
       const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
       if (targetUser) socket.to(targetUser.socketId).emit('remote-keyboard', { key });
     }
