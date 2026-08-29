@@ -48,32 +48,23 @@ let remoteControlRequestId = null;
 let isBeingControlled = false;
 let remotePointer = null;
 
-// ✅ FIX: TURN server list defined once so it can be reused / extended easily.
-// openrelay.metered.ca is a free shared TURN server and can be unreliable when
-// two peers are on very different networks (mobile data vs office firewall,
-// different countries, etc). If screen share keeps showing a black box for
-// specific network combinations, replace/add credentials from your own TURN
-// provider (e.g. Metered.ca free tier, Cloudflare Calls TURN, Twilio NTS).
+// ✅ កែប្រែ៖ ប្រើប្រាស់ STUN Server របស់ Google និងកន្លែងសម្រាប់ដាក់ TURN Server ផ្ទាល់ខ្លួន
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
+  // ⚠️ សូមជំនួសព័ត៌មានខាងក្រោមដោយ Credentials ដែលបងទទួលបានពី Metered.ca (ឬសេវាផ្សេងទៀត)
   {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    urls: 'turn:YOUR_TURN_SERVER_URL:443',
+    username: 'YOUR_USERNAME',
+    credential: 'YOUR_PASSWORD'
   },
   {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    urls: 'turn:YOUR_TURN_SERVER_URL:443?transport=tcp',
+    username: 'YOUR_USERNAME',
+    credential: 'YOUR_PASSWORD'
   }
 ];
 
@@ -166,7 +157,10 @@ function connectSocket() {
 
       if (isScreenSharing && screenStream && myPeer) {
         setTimeout(function() {
-          callScreenShareToUser(peerId);
+          const call = myPeer.call(peerId, screenStream, {
+            metadata: { type: 'screen', username: myUsername }
+          });
+          attachIceDiagnostics(call, peerId, 'screen (outgoing, late-join)');
         }, 1000);
       }
     }
@@ -635,76 +629,28 @@ function showChatNotification(username, message, peerId) {
 // PEERJS & WEBRTC FUNCTIONS
 // ============================================================
 
-// ✅ FIX: helper to log ICE connection state per-call AND automatically try
-// to recover the connection when it fails or drops — this is the actual
-// cause of "black screen + disconnect" when two peers are on very different
-// networks (both behind symmetric NAT, corporate firewalls, etc). Without
-// this, a failed ICE negotiation just dies silently with no retry.
-function attachIceDiagnostics(call, peerId, label, retryFn) {
+function attachIceDiagnostics(call, peerId, label) {
   if (!call || !call.peerConnection) return;
-  let retried = false;
-
   call.peerConnection.oniceconnectionstatechange = function() {
     const state = call.peerConnection.iceConnectionState;
     console.log(`🧊 [${label}] ICE state with ${peerId}:`, state);
-
-    if ((state === 'failed' || state === 'disconnected') && !retried) {
-      retried = true;
-      console.log(`❌ [${label}] ICE ${state} with ${peerId} — ព្យាយាមភ្ជាប់ឡើងវិញ...`);
-      showToast('⚠️ ការតភ្ជាប់មានបញ្ហា កំពុងព្យាយាមភ្ជាប់ឡើងវិញ...', 'warning');
-
-      // ជំហានទី១៖ សាកល្បង ICE restart លើ Peer Connection ដដែល (លឿនជាង)
-      if (typeof call.peerConnection.restartIce === 'function') {
-        try {
-          call.peerConnection.restartIce();
-        } catch (e) {
-          console.log('restartIce not supported/failed:', e);
-        }
-      }
-
-      // ជំហានទី២៖ បើនៅតែ Fail បន្ទាប់ពី ៥ វិនាទី បិទ Call ចាស់ ហើយហៅ retryFn
-      // ឡើងវិញទាំងស្រុង (បង្កើត Call ថ្មី) - នេះជាវិធីដែលអាចទុកចិត្តបានបំផុត
-      setTimeout(function() {
-        const currentState = call.peerConnection.iceConnectionState;
-        if ((currentState === 'failed' || currentState === 'disconnected') && retryFn) {
-          console.log(`🔄 [${label}] ព្យាយាមភ្ជាប់ Call ថ្មីជាមួយ ${peerId}...`);
-          try { call.close(); } catch (e) {}
-          delete peerCalls[peerId];
-          retryFn();
-        }
-      }, 5000);
-    }
-
-    if (state === 'connected' || state === 'completed') {
-      retried = false; // reset once healthy again
+    if (state === 'failed') {
+      console.log(`❌ [${label}] ICE FAILED with ${peerId} — TURN relay ប្រហែលមិនដំណើរការ ឬបណ្តាញរឹតបន្តឹងពេក`);
+      showToast('⚠️ ការតភ្ជាប់ជាមួយអ្នកប្រើម្នាក់មានបញ្ហា (Network)', 'warning');
     }
   };
 }
 
 function initPeerJS() {
-  // ✅ FIX: the old code created `new Peer(undefined, { config: {...} })`
-  // with NO host/port/path — that silently connects to PeerJS's PUBLIC
-  // CLOUD signaling server (0.peerjs.com), completely ignoring the
-  // ExpressPeerServer you're self-hosting at /peerjs in server.js!
-  // That public server has strict rate limits and is blocked on some
-  // corporate/school networks, which is a major cause of connections
-  // failing specifically when two users are on very different networks.
-  // We now explicitly point to our own self-hosted PeerServer.
-  const isHttps = window.location.protocol === 'https:';
   myPeer = new Peer(undefined, {
-    host: window.location.hostname,
-    port: window.location.port ? Number(window.location.port) : (isHttps ? 443 : 80),
-    path: '/peerjs',
-    secure: isHttps,
     config: {
-      iceServers: ICE_SERVERS,
-      iceCandidatePoolSize: 10
+      iceServers: ICE_SERVERS
     }
   });
 
   myPeer.on('open', function(id) {
     myId = id;
-    console.log('✅ PeerJS Connected with ID:', myId, '(self-hosted /peerjs)');
+    console.log('✅ PeerJS Connected with ID:', myId);
     
     if (socket && socketConnected && currentRoomId && myUsername) {
       socket.emit('join-room', {
@@ -726,9 +672,8 @@ function initPeerJS() {
     }
 
     const type = (call.metadata && call.metadata.type) || 'video';
-    const label = type === 'screen' ? 'screen (incoming)' : 'video (incoming)';
-    attachIceDiagnostics(call, call.peer, label, null); // incoming side doesn't re-initiate; caller side retries
-
+    attachIceDiagnostics(call, call.peer, type === 'screen' ? 'screen (incoming)' : 'video (incoming)');
+    
     call.on('stream', function(remoteStream) {
       console.log('📺 Received remote stream from:', call.peer, 'type:', type);
       const callerUsername = (call.metadata && call.metadata.username) || 'User';
@@ -756,14 +701,6 @@ function initPeerJS() {
 
   myPeer.on('error', function(err) {
     console.error('❌ PeerJS Error:', err);
-    showToast('⚠️ PeerJS មានបញ្ហា: ' + (err && err.type ? err.type : 'unknown'), 'warning');
-  });
-
-  myPeer.on('disconnected', function() {
-    console.log('⚠️ PeerJS disconnected from signaling server, reconnecting...');
-    if (myPeer && !myPeer.destroyed) {
-      try { myPeer.reconnect(); } catch (e) { console.log('reconnect failed', e); }
-    }
   });
 }
 
@@ -782,9 +719,7 @@ function connectToUser(peerId) {
     metadata: { type: 'video', username: myUsername }
   });
 
-  attachIceDiagnostics(call, peerId, 'video (outgoing)', function() {
-    connectToUser(peerId); // retry from scratch
-  });
+  attachIceDiagnostics(call, peerId, 'video (outgoing)');
 
   call.on('stream', function(remoteStream) {
     console.log('📺 Stream received from:', peerId);
@@ -856,8 +791,6 @@ function attachRemoteStream(peerId, stream) {
   const videoElem = document.getElementById('stream-' + peerId);
   if (videoElem) {
     videoElem.srcObject = stream;
-    // ✅ FIX: explicitly call play() and catch autoplay-block errors instead
-    // of failing silently (would otherwise show a frozen/black frame).
     const playPromise = videoElem.play();
     if (playPromise && playPromise.catch) {
       playPromise.catch(function(err) {
@@ -882,10 +815,6 @@ function addRemoteScreenVideo(peerId, stream, username) {
   const video = document.createElement('video');
   video.autoplay = true;
   video.playsInline = true;
-  // ✅ FIX: screen-share streams normally carry no audio track, so muting is
-  // safe and required — most browsers (esp. Chrome) block autoplay of
-  // non-muted <video> elements without a prior user gesture, which is the
-  // main reason the tile showed a black box instead of the shared screen.
   video.muted = true;
   video.srcObject = stream;
 
@@ -967,19 +896,6 @@ async function toggleCamera() {
   }
 }
 
-// ✅ FIX: pulled into its own function (not stored in peerCalls, since that
-// dict is used for the video call to the same peerId) so the ICE-failure
-// retry logic can re-issue the screen-share call on its own.
-function callScreenShareToUser(peerId) {
-  if (!myPeer || !screenStream || !isScreenSharing) return;
-  const call = myPeer.call(peerId, screenStream, {
-    metadata: { type: 'screen', username: myUsername }
-  });
-  attachIceDiagnostics(call, peerId, 'screen (outgoing)', function() {
-    callScreenShareToUser(peerId);
-  });
-}
-
 async function toggleScreenShare() {
   if (isScreenSharing) {
     if (screenStream) {
@@ -990,12 +906,20 @@ async function toggleScreenShare() {
     showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
   } else {
     try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      // ✅ កែប្រែ៖ បន្ថយ Frame Rate និងកំណត់ Resolution ដើម្បីកុំឱ្យស្ទះ Network
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ 
+        video: { 
+          frameRate: { ideal: 15, max: 30 }
+        } 
+      });
       isScreenSharing = true;
       
       Object.keys(userNamesMap).forEach(peerId => {
         if (peerId !== myId && myPeer) {
-          callScreenShareToUser(peerId);
+          const call = myPeer.call(peerId, screenStream, {
+            metadata: { type: 'screen', username: myUsername }
+          });
+          attachIceDiagnostics(call, peerId, 'screen (outgoing)');
         }
       });
       
