@@ -164,6 +164,10 @@ function connectSocket() {
         if (user.peerId !== myId) {
           userNamesMap[user.peerId] = user.username;
           addRemoteVideo(user.peerId, user.username);
+          // ✅ FIX: The NEW joiner is the ONLY side that initiates the call
+          // to each existing user. PeerJS calls are already bidirectional
+          // (call.answer() sends media back on the SAME connection), so the
+          // existing user does NOT need to call back — see 'user-joined' below.
           setTimeout(function() {
             connectToUser(user.peerId);
           }, 500);
@@ -186,9 +190,17 @@ function connectSocket() {
       updateChatUserList();
       playNotificationSound('join');
       
-      setTimeout(function() {
-        connectToUser(peerId);
-      }, 500);
+      // ✅ FIX: Do NOT call connectToUser() here anymore.
+      // The new joiner already calls US (see 'room-joined' handler on their
+      // side). If both sides call each other, TWO separate PeerJS calls get
+      // created for the same pair of peers, and peerCalls[peerId] can only
+      // hold one of them — the other becomes "orphaned": its media keeps
+      // flowing on a live connection, but updateStreamToAllPeers() (used by
+      // toggleCamera/toggleMic) can no longer find it to replaceTrack().
+      // That's exactly why a late joiner's camera never reached admin until
+      // admin left and rejoined (which reset everything to a single call).
+      // We simply wait for their incoming call and answer it below in
+      // myPeer.on('call', ...).
 
       if (isScreenSharing && screenStream && myPeer) {
         setTimeout(function() {
@@ -683,59 +695,21 @@ function updateStreamToAllPeers(stream) {
   if (!stream) return;
   
   const videoTrack = stream.getVideoTracks()[0];
-  if (!videoTrack) {
-    console.log('⚠️ No video track found in stream');
-    return;
-  }
-  
-  console.log('📤 Updating video track to all peers...');
+  if (!videoTrack) return;
   
   Object.keys(peerCalls).forEach(peerId => {
     const call = peerCalls[peerId];
     if (call && call.peerConnection) {
-      try {
-        const senders = call.peerConnection.getSenders();
-        const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-        if (videoSender) {
-          videoSender.replaceTrack(videoTrack);
-          console.log(`✅ Updated video track for peer: ${peerId}`);
-        } else {
-          // ប្រសិនបើគ្មាន video sender បង្កើតថ្មី
-          console.log(`⚠️ No video sender found for peer: ${peerId}, adding new track`);
-          call.peerConnection.addTrack(videoTrack, stream);
-        }
-      } catch (error) {
-        console.error(`❌ Error updating track for peer ${peerId}:`, error);
-      }
-    }
-  });
-}
-
-// ============================================================
-// UPDATE STREAM TO SPECIFIC PEER - FIXED
-// ============================================================
-function updateStreamToPeer(stream, peerId) {
-  if (!stream || !peerId) return;
-  
-  const videoTrack = stream.getVideoTracks()[0];
-  if (!videoTrack) return;
-  
-  const call = peerCalls[peerId];
-  if (call && call.peerConnection) {
-    try {
       const senders = call.peerConnection.getSenders();
       const videoSender = senders.find(s => s.track && s.track.kind === 'video');
       if (videoSender) {
         videoSender.replaceTrack(videoTrack);
-        console.log(`✅ Updated video track to peer: ${peerId}`);
+        console.log(`✅ Updated video track for peer: ${peerId}`);
       } else {
-        call.peerConnection.addTrack(videoTrack, stream);
-        console.log(`✅ Added new video track to peer: ${peerId}`);
+        console.log(`⚠️ No video sender found for peer ${peerId} — call may be missing a video track`);
       }
-    } catch (error) {
-      console.error(`❌ Error updating track for peer ${peerId}:`, error);
     }
-  }
+  });
 }
 
 // ============================================================
@@ -788,7 +762,7 @@ function initPeerJS() {
         initDummyStream();
       }
       
-      // Answer with current localStream
+      // ✅ FIX: Answer with current localStream
       call.answer(localStream);
 
       const type = (call.metadata && call.metadata.type) || 'video';
@@ -816,7 +790,19 @@ function initPeerJS() {
         delete peerCalls[call.peer];
       });
 
-      peerCalls[call.peer] = call;
+      // ✅ FIX: Only track this call in peerCalls if it's a regular video
+      // call (not a screen-share call), and only if we don't already have
+      // an outgoing call tracked for this peer. This prevents an incoming
+      // call from silently overwriting — or being silently discarded by —
+      // an existing outgoing call to the same peer, which was the root
+      // cause of camera updates not reaching some participants.
+      if (type !== 'screen') {
+        if (!peerCalls[call.peer]) {
+          peerCalls[call.peer] = call;
+        } else {
+          console.log(`⚠️ Duplicate call detected for ${call.peer} — keeping existing tracked call, this incoming call still answers normally but is not tracked for track-replacement.`);
+        }
+      }
     });
 
     myPeer.on('error', function(err) {
@@ -873,13 +859,6 @@ function connectToUser(peerId) {
   });
 
   peerCalls[peerId] = call;
-  
-  // ✅ FIX: បញ្ជូន localStream បច្ចុប្បន្នទៅកាន់អ្នកប្រើថ្មី
-  if (localStream) {
-    setTimeout(function() {
-      updateStreamToPeer(localStream, peerId);
-    }, 1000);
-  }
 }
 
 // ============================================================
@@ -914,7 +893,6 @@ function initDummyStream() {
 
   const newStream = new MediaStream([canvasStream.getVideoTracks()[0], audioTrack]);
   
-  // ✅ FIX: បើ localStream មានរួចហើយ បញ្ជូនទៅអ្នកដទៃ
   if (localStream) {
     localStream = newStream;
     if (localVideo) localVideo.srcObject = localStream;
@@ -1087,7 +1065,9 @@ async function toggleScreenShare() {
             metadata: { type: 'screen', username: myUsername }
           });
           attachIceDiagnostics(call, peerId, 'screen (outgoing)');
-          peerCalls[peerId] = call;
+          // Note: screen-share calls are intentionally NOT stored in
+          // peerCalls, since that map is reserved for the video calls that
+          // updateStreamToAllPeers()/toggleCamera() operate on.
         }
       });
       
