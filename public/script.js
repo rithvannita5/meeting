@@ -673,6 +673,94 @@ function showChatNotification(username, message, peerId) {
 }
 
 // ============================================================
+// MEDIA LIGHTBOX (click camera/screen video to enlarge)
+// ============================================================
+
+function injectLightboxStyles() {
+  if (document.getElementById('mediaLightboxStyles')) return;
+  const style = document.createElement('style');
+  style.id = 'mediaLightboxStyles';
+  style.textContent = `
+    .zoomable-video { cursor: zoom-in; transition: transform 0.15s ease, box-shadow 0.15s ease; }
+    .zoomable-video:hover { transform: scale(1.015); box-shadow: 0 0 0 2px #48cae4; }
+    #mediaLightboxOverlay { animation: mediaLightboxFadeIn 0.15s ease; }
+    @keyframes mediaLightboxFadeIn { from { opacity: 0; } to { opacity: 1; } }
+  `;
+  document.head.appendChild(style);
+}
+
+function ensureLightbox() {
+  injectLightboxStyles();
+  if (document.getElementById('mediaLightboxOverlay')) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'mediaLightboxOverlay';
+  overlay.style.cssText = `
+    position: fixed; inset: 0; background: rgba(0,0,0,0.92);
+    display: none; z-index: 999999; justify-content: center; align-items: center;
+    flex-direction: column; padding: 24px; box-sizing: border-box;
+  `;
+  overlay.innerHTML = `
+    <div id="mediaLightboxLabel" style="color:#fff; font-size:16px; margin-bottom:14px; font-weight:600; text-align:center;"></div>
+    <video id="mediaLightboxVideo" autoplay playsinline style="max-width:95vw; max-height:80vh; border-radius:12px; background:#000; box-shadow:0 10px 40px rgba(0,0,0,0.6);"></video>
+    <button id="mediaLightboxClose" title="បិទ" style="
+      position:absolute; top:20px; right:20px; width:44px; height:44px;
+      border-radius:50%; border:none; background:rgba(255,255,255,0.15);
+      color:#fff; font-size:20px; cursor:pointer; line-height:1;
+    ">✕</button>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) closeLightbox();
+  });
+  document.getElementById('mediaLightboxClose').addEventListener('click', closeLightbox);
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeLightbox();
+  });
+}
+
+function openLightbox(sourceVideoElem, label) {
+  if (!sourceVideoElem || !sourceVideoElem.srcObject) {
+    showToast('វីដេអូនេះមិនទាន់មានទេ!', 'warning');
+    return;
+  }
+  ensureLightbox();
+  const overlay = document.getElementById('mediaLightboxOverlay');
+  const video = document.getElementById('mediaLightboxVideo');
+  const labelElem = document.getElementById('mediaLightboxLabel');
+
+  video.srcObject = sourceVideoElem.srcObject;
+  video.muted = sourceVideoElem.muted;
+  labelElem.textContent = label || '';
+  overlay.style.display = 'flex';
+
+  const playPromise = video.play();
+  if (playPromise && playPromise.catch) {
+    playPromise.catch(function() {});
+  }
+}
+
+function closeLightbox() {
+  const overlay = document.getElementById('mediaLightboxOverlay');
+  if (!overlay) return;
+  overlay.style.display = 'none';
+  const video = document.getElementById('mediaLightboxVideo');
+  if (video) video.srcObject = null;
+}
+
+// Makes a <video> element clickable to open it enlarged in the lightbox.
+function makeZoomable(videoElem, labelText) {
+  if (!videoElem || videoElem.dataset.zoomBound === '1') return;
+  videoElem.classList.add('zoomable-video');
+  videoElem.title = 'ចុចដើម្បីពង្រីក';
+  videoElem.addEventListener('click', function() {
+    openLightbox(videoElem, labelText);
+  });
+  videoElem.dataset.zoomBound = '1';
+}
+
+// ============================================================
 // PEERJS & WEBRTC FUNCTIONS
 // ============================================================
 
@@ -915,6 +1003,9 @@ function addRemoteVideo(peerId, username) {
     <video id="stream-${peerId}" autoplay playsinline></video>
   `;
   if (videoGrid) videoGrid.appendChild(card);
+
+  const videoElem = document.getElementById('stream-' + peerId);
+  makeZoomable(videoElem, '👤 ' + username);
 }
 
 function attachRemoteStream(peerId, stream) {
@@ -958,6 +1049,8 @@ function addRemoteScreenVideo(peerId, stream, username) {
   const label = document.createElement('div');
   label.className = 'name-tag';
   label.textContent = '🖥️ Screen: ' + username;
+
+  makeZoomable(video, '🖥️ Screen: ' + username);
 
   card.appendChild(video);
   card.appendChild(label);
@@ -1091,6 +1184,8 @@ async function toggleScreenShare() {
       label.className = 'name-tag';
       label.textContent = '🖥️ Screen: ' + myUsername + ' (អ្នក)';
       
+      makeZoomable(localScreenVideo, '🖥️ Screen: ' + myUsername + ' (អ្នក)');
+
       localScreenCard.appendChild(localScreenVideo);
       localScreenCard.appendChild(label);
       
@@ -1105,6 +1200,36 @@ async function toggleScreenShare() {
     } catch (err) {
       showToast('❌ បោះបង់ការចែករំលែកអេក្រង់!', 'warning');
     }
+  }
+
+  updateScreenShareButtonUI();
+}
+
+// ============================================================
+// SCREEN SHARE BUTTON UI (toggle label: Share <-> Stop Sharing)
+// ============================================================
+function updateScreenShareButtonUI() {
+  // Works regardless of the button's id — finds it by its onclick attribute,
+  // matching the inline onclick="toggleScreenShare()" pattern used elsewhere
+  // in this app (e.g. onclick="adminJoinRoom(...)").
+  const btn = document.querySelector('[onclick*="toggleScreenShare"]');
+  if (!btn) return;
+
+  if (!btn.dataset.origHtml) {
+    btn.dataset.origHtml = btn.innerHTML;
+  }
+  if (!btn.dataset.origBg) {
+    btn.dataset.origBg = btn.style.background || '';
+  }
+
+  if (isScreenSharing) {
+    btn.innerHTML = '⏹️ បិទ Share Screen';
+    btn.style.background = '#ef4444';
+    btn.classList.add('sharing-active');
+  } else {
+    btn.innerHTML = btn.dataset.origHtml;
+    btn.style.background = btn.dataset.origBg;
+    btn.classList.remove('sharing-active');
   }
 }
 
@@ -1717,5 +1842,10 @@ window.addEventListener('DOMContentLoaded', function() {
         sendPrivateMessage();
       }
     });
+  }
+
+  // Make your own camera preview clickable to enlarge too
+  if (localVideo) {
+    makeZoomable(localVideo, '👤 ' + (myUsername || 'អ្នក'));
   }
 });
