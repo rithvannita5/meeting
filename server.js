@@ -43,6 +43,51 @@ io.engine.on("connection_error", (err) => {
 // ========== Base Routes ==========
 app.get('/ping', (req, res) => res.send('pong'));
 
+// ========== TURN Credentials (Cloudflare Realtime) ==========
+// ✅ FIX: the browser console showed ICE gathering only "host" and "srflx"
+// candidates — never a "relay" one — which is why the ICE connection state
+// went checking -> disconnected: the static openrelay.metered.ca TURN
+// credentials are not producing working relay candidates anymore for these
+// two users' networks, so any pair where STUN alone isn't enough (symmetric
+// NAT, strict firewall, one side on mobile data, etc.) can never connect.
+//
+// This endpoint issues short-lived TURN credentials from Cloudflare Realtime
+// (generous free tier, very reliable) if you configure TURN_KEY_ID and
+// TURN_KEY_API_TOKEN as Render environment variables. Get them free at:
+// https://dash.cloudflare.com -> Realtime -> TURN -> Create a TURN key
+// If the env vars aren't set, this endpoint just returns null and the
+// client silently falls back to the static STUN/TURN list in script.js.
+const TURN_KEY_ID = process.env.TURN_KEY_ID;
+const TURN_KEY_API_TOKEN = process.env.TURN_KEY_API_TOKEN;
+
+app.get('/api/turn-credentials', async (req, res) => {
+  if (!TURN_KEY_ID || !TURN_KEY_API_TOKEN) {
+    return res.json({ iceServers: null });
+  }
+  try {
+    const cfRes = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${TURN_KEY_ID}/credentials/generate-ice-servers`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${TURN_KEY_API_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ ttl: 86400 })
+      }
+    );
+    if (!cfRes.ok) {
+      console.error('❌ Cloudflare TURN credential error:', cfRes.status, await cfRes.text());
+      return res.json({ iceServers: null });
+    }
+    const data = await cfRes.json();
+    res.json({ iceServers: data.iceServers || null });
+  } catch (err) {
+    console.error('❌ TURN credentials fetch failed:', err);
+    res.json({ iceServers: null });
+  }
+});
+
 // ========== MongoDB Atlas Config ==========
 // ⚠️ សូមប្តូរ Password Database ជាបន្ទាន់ ហើយដាក់តម្លៃថ្មីនៅក្នុង Environment
 // Variable MONGO_URI នៅលើ Render (កុំដាក់ hardcode ក្នុង code ទៀត)
