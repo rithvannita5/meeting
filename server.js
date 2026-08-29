@@ -19,7 +19,7 @@ const peerServer = ExpressPeerServer(server, {
 });
 app.use('/peerjs', peerServer);
 
-// ========== Socket.IO Config - FIXED FOR RENDER ==========
+// ========== Socket.IO Config ==========
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -43,10 +43,64 @@ io.engine.on("connection_error", (err) => {
 // ========== Base Routes ==========
 app.get('/ping', (req, res) => res.send('pong'));
 
+// ============================================================
+// CLOUDFLARE TURN API
+// ============================================================
+app.get('/api/turn-credentials', async (req, res) => {
+  try {
+    const tokenId = process.env.CLOUDFLARE_TURN_TOKEN_ID;
+    const apiToken = process.env.CLOUDFLARE_TURN_API_TOKEN;
+    
+    if (!tokenId || !apiToken) {
+      console.error('❌ Cloudflare TURN credentials not configured');
+      return res.status(500).json({ 
+        error: 'TURN server not configured',
+        fallback: true 
+      });
+    }
+
+    console.log('🔄 Generating Cloudflare TURN credentials...');
+
+    const response = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${tokenId}`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ttl: 86400
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Cloudflare API error:', response.status, errorText);
+      throw new Error(`Cloudflare API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log('✅ Cloudflare TURN credentials generated successfully');
+    
+    res.json({
+      iceServers: data.iceServers || []
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting Cloudflare TURN:', error);
+    res.status(500).json({ 
+      error: 'Could not get TURN credentials',
+      fallback: true 
+    });
+  }
+});
+
 // ========== MongoDB Atlas Config ==========
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) {
-  console.error('❌ MONGO_URI environment variable មិនត្រូវបានកំណត់ទេ!');
+  console.error('❌ MONGO_URI environment variable not set!');
 }
 
 const userSchema = new mongoose.Schema({
@@ -100,7 +154,6 @@ app.post('/api/login', async (req, res) => {
     if (!user) return res.status(401).json({ success: false, message: 'ឈ្មោះ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ!' });
     if (user.isBlocked) return res.status(403).json({ success: false, message: 'គណនីត្រូវបានផ្អាក!' });
 
-    // ✅ FIX: Admin និង Supervisor អាចចូលបន្ទប់ទាំងអស់
     const isAdminOrSupervisor = user.role === 'admin' || user.role === 'supervisor';
     if (!isAdminOrSupervisor && user.assignedRoom !== roomId) {
       return res.status(403).json({ success: false, message: `អ្នកគ្មានសិទ្ធិចូលបន្ទប់ ${roomId} ទេ!` });
