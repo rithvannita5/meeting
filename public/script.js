@@ -1028,24 +1028,61 @@ function cancel2FA() {
 function finalizeLogin(data) {
   myUsername = data.user.username;
   currentUserRole = data.user.role;
-  currentRoomId = pendingLoginData.roomId;
+  currentRoomId = pendingLoginData.roomId || document.getElementById('roomSelect').value;
 
-  var mainBody = document.getElementById('mainBody');
-  if (mainBody) mainBody.style.justifyContent = 'flex-start';
-  
-  var authDiv = document.getElementById('auth');
-  if (authDiv) authDiv.classList.add('hidden');
-
-  if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
-    socket.emit('register-admin');
-    var adminDashboard = document.getElementById('admin-dashboard');
-    if (adminDashboard) adminDashboard.classList.remove('hidden');
-    var adminRoleDisplay = document.getElementById('adminRoleDisplay');
-    if (adminRoleDisplay) adminRoleDisplay.textContent = currentUserRole.toUpperCase();
-    switchAdminTab('rooms');
-  } else {
-    startMeeting();
+  // ១. កែសម្រួល body style ឱ្យរីកពេញ Layout បន្ទប់ (ដោះស្រាយបញ្ហាផ្ទាំងខ្មៅ)
+  const mainBody = document.getElementById('mainBody');
+  if (mainBody) {
+    mainBody.style.justifyContent = 'flex-start';
+    mainBody.style.alignItems = 'stretch';
   }
+
+  // ២. លាក់ Form Login
+  const authCard = document.getElementById('auth');
+  if (authCard) authCard.classList.add('hidden');
+
+  // ៣. ឆែកមើល Role របស់ User
+  if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
+    // បង្ហាញ Admin Dashboard
+    const adminDash = document.getElementById('admin-dashboard');
+    if (adminDash) adminDash.classList.remove('hidden');
+    
+    const adminRoleDisplay = document.getElementById('adminRoleDisplay');
+    if (adminRoleDisplay) adminRoleDisplay.textContent = currentUserRole.toUpperCase();
+    
+    if (typeof switchAdminTab === 'function') {
+      switchAdminTab('rooms');
+    }
+  } else {
+    // ៤. ប្រសិនបើជា User ធម្មតា បើកបង្ហាញ Room Container
+    const roomContainer = document.getElementById('room-container');
+    if (roomContainer) {
+      roomContainer.classList.remove('hidden');
+      roomContainer.style.display = 'flex';
+    }
+
+    // បង្ហាញឈ្មោះនៅលើ Welcome Header
+    const welcomeText = document.getElementById('welcome-text');
+    if (welcomeText) {
+      welcomeText.textContent = `👋 សួស្តី ${myUsername}! កំពុងស្ថិតក្នុងបន្ទប់៖ ${currentRoomId}`;
+    }
+
+    // ៥. ដំណើរការ Camera/Stream និង Socket/PeerJS
+    if (typeof initDummyStream === 'function') initDummyStream();
+
+    if (myPeer && myPeer.id) {
+      myId = myPeer.id;
+      socket.emit('join-room', {
+        roomId: currentRoomId,
+        peerId: myId,
+        username: myUsername
+      });
+    } else if (typeof initPeerJS === 'function') {
+      initPeerJS();
+    }
+  }
+
+  showToast('✅ ចូលប្រើប្រាស់បានជោគជ័យ!', 'success');
 }
 
 // ============================================================
