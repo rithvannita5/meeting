@@ -19,28 +19,15 @@ const peerServer = ExpressPeerServer(server, {
 });
 app.use('/peerjs', peerServer);
 
-// server.js - បន្ថែមក្នុង io.on('connection')
-
-socket.on('ping', (data, callback) => {
-  console.log('🏓 Ping received from:', socket.id);
-  if (callback) {
-    callback({ status: 'pong', timestamp: Date.now() });
-  }
-});
-
-// Heartbeat check
-socket.on('heartbeat', () => {
-  // គ្រាន់តែឆ្លើយតប
-});
-
-// ========== Socket.IO Config ==========
+// ============================================================
+// SOCKET.IO CONFIG - FIXED
+// ============================================================
 const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"],
     credentials: true
   },
-  // ✅ FIX: ប្រើតែ polling មិនប្រើ WebSocket
   transports: ['polling'],
   allowUpgrades: false,
   pingTimeout: 60000,
@@ -51,24 +38,22 @@ const io = new Server(server, {
   path: '/socket.io'
 });
 
-// ✅ FIX: បន្ថែម engine.io error handling
 io.engine.on("connection_error", (err) => {
   console.log('❌ Socket.IO engine error:', err);
 });
 
-// ✅ FIX: បន្ថែម connection retry logic
 io.engine.on("connection", (socket) => {
   console.log('✅ Engine.IO connection established');
 });
 
 io.engine.on("headers", (headers, req) => {
-  // អនុញ្ញាត CORS headers
   headers["Access-Control-Allow-Origin"] = "*";
   headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
   headers["Access-Control-Allow-Headers"] = "Content-Type";
 });
 
-
+// ========== Base Routes ==========
+app.get('/ping', (req, res) => res.send('pong'));
 
 // ============================================================
 // CLOUDFLARE TURN API
@@ -447,20 +432,22 @@ app.post('/api/remote-control/end', async (req, res) => {
   }
 });
 
-// server.js - បន្ថែមការពិនិត្យ socket connection
-
+// ============================================================
+// SOCKET.IO LOGIC - FIXED
+// ============================================================
 io.on('connection', (socket) => {
   console.log('🔌 Socket connected:', socket.id);
   
-  // ✅ FIX: ផ្ញើ acknowledgment ពេលភ្ជាប់បាន
   socket.emit('connection_ack', { 
     status: 'connected', 
     socketId: socket.id 
   });
-  
-// ========== Socket.io Logic ==========
-io.on('connection', (socket) => {
-  console.log('🔌 Socket connected:', socket.id);
+
+  socket.on('ping', (data, callback) => {
+    if (callback) {
+      callback({ status: 'pong', timestamp: Date.now() });
+    }
+  });
 
   socket.on('join-room', (data) => {
     let roomId, peerId, username;
@@ -538,7 +525,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Remote Control Events
   socket.on('remote-mouse-move', ({ targetId, x, y }) => {
     const roomId = socket.data.roomId;
     if (roomId && roomUsers[roomId]) {
