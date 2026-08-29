@@ -55,24 +55,33 @@ io.engine.on("headers", (headers, req) => {
 // ========== Base Routes ==========
 app.get('/ping', (req, res) => res.send('pong'));
 
-// ============================================================
-// CLOUDFLARE TURN API
-// ============================================================
+// server.js - កែប្រែផ្នែក Cloudflare TURN API
+
 app.get('/api/turn-credentials', async (req, res) => {
   try {
+    // ✅ FIX: បន្ថែម log ដើម្បីពិនិត្យ Environment Variables
+    console.log('🔍 Checking Environment Variables...');
+    console.log('CLOUDFLARE_TURN_TOKEN_ID:', process.env.CLOUDFLARE_TURN_TOKEN_ID ? '✅ SET' : '❌ MISSING');
+    console.log('CLOUDFLARE_TURN_API_TOKEN:', process.env.CLOUDFLARE_TURN_API_TOKEN ? '✅ SET' : '❌ MISSING');
+    
     const tokenId = process.env.CLOUDFLARE_TURN_TOKEN_ID;
     const apiToken = process.env.CLOUDFLARE_TURN_API_TOKEN;
     
     if (!tokenId || !apiToken) {
       console.error('❌ Cloudflare TURN credentials not configured');
-      return res.status(500).json({ 
-        error: 'TURN server not configured',
+      // ✅ FIX: ប្រសិនបើមិនមាន credentials ប្រើ fallback
+      return res.json({ 
+        iceServers: ICE_SERVERS_FALLBACK,
         fallback: true 
       });
     }
 
     console.log('🔄 Generating Cloudflare TURN credentials...');
 
+    // ✅ FIX: បន្ថែម timeout និង error handling
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    
     const response = await fetch(
       `https://rtc.live.cloudflare.com/v1/turn/keys/${tokenId}`,
       {
@@ -83,31 +92,55 @@ app.get('/api/turn-credentials', async (req, res) => {
         },
         body: JSON.stringify({
           ttl: 86400
-        })
+        }),
+        signal: controller.signal
       }
     );
+    clearTimeout(timeout);
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error('❌ Cloudflare API error:', response.status, errorText);
-      throw new Error(`Cloudflare API error: ${response.status}`);
+      // ✅ FIX: ប្រសិនបើ API error ប្រើ fallback
+      return res.json({ 
+        iceServers: ICE_SERVERS_FALLBACK,
+        fallback: true 
+      });
     }
 
     const data = await response.json();
     console.log('✅ Cloudflare TURN credentials generated successfully');
     
     res.json({
-      iceServers: data.iceServers || []
+      iceServers: data.iceServers || ICE_SERVERS_FALLBACK
     });
 
   } catch (error) {
     console.error('❌ Error getting Cloudflare TURN:', error);
-    res.status(500).json({ 
-      error: 'Could not get TURN credentials',
+    // ✅ FIX: ប្រសិនបើមាន error ណាមួយ ប្រើ fallback
+    res.json({ 
+      iceServers: ICE_SERVERS_FALLBACK,
       fallback: true 
     });
   }
 });
+
+// ✅ FIX: បន្ថែម ICE_SERVERS_FALLBACK សម្រាប់ server side
+const ICE_SERVERS_FALLBACK = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  }
+];
 
 // ========== MongoDB Atlas Config ==========
 const MONGO_URI = process.env.MONGO_URI;
