@@ -765,43 +765,33 @@ async function loadUsersTable() {
 function adminJoinRoom(roomId) {
   currentRoomId = roomId;
 
-  // ១. លាក់ Admin Dashboard
+  // ១. កែសម្រួល body style ឱ្យត្រូវតាម Layout បន្ទប់ Meeting (ដើម្បីកុំឱ្យដើរខុស Layout)
+  const mainBody = document.getElementById('mainBody');
+  if (mainBody) {
+    mainBody.style.justifyContent = 'flex-start';
+    mainBody.style.alignItems = 'stretch';
+  }
+
+  // ២. លាក់ Admin Dashboard
   const adminDash = document.getElementById('admin-dashboard');
   if (adminDash) {
     adminDash.classList.add('hidden');
-    adminDash.style.display = 'none'; // បង្ខំបិទ Admin Dashboard
   }
 
-  // ២. បើកបង្ហាញ Meeting Container និងធាតុទាំងអស់របស់វា
-  const meetingContainer = document.getElementById('meeting-container');
-  if (meetingContainer) {
-    meetingContainer.classList.remove('hidden');
-    meetingContainer.style.display = 'block'; // ឬ 'flex' តាម Layout ដើម
+  // ៣. បើកបង្ហាញ Room Container ដើមរបស់បង
+  const roomContainer = document.getElementById('room-container');
+  if (roomContainer) {
+    roomContainer.classList.remove('hidden');
+    roomContainer.style.display = 'flex'; // បង្ខំឱ្យវាបង្ហាញឡើង
   }
 
-  // បើកបង្ហាញ Element ផ្សេងៗដែលនៅក្នុង Meeting បើវាមាន Class hidden
-  const elementsToShow = [
-    'meeting-header',
-    'meeting-sidebar',
-    'video-container',
-    'screenGrid',
-    'videoGrid',
-    'controls-bar'
-  ];
+  // ៤. ធ្វើបច្ចុប្បន្នភាពអក្សរ Welcome Header
+  const welcomeText = document.getElementById('welcome-text');
+  if (welcomeText) {
+    welcomeText.textContent = `👋 សួស្តី Admin! កំពុងមើលបន្ទប់៖ ${currentRoomId}`;
+  }
 
-  elementsToShow.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.classList.remove('hidden');
-      el.style.display = ''; // Reset inline display
-    }
-  });
-
-  // ៣. បង្ហាញឈ្មោះបន្ទប់នៅលើ Header
-  const displayRoom = document.getElementById('displayRoomId');
-  if (displayRoom) displayRoom.textContent = currentRoomId;
-
-  // ៤. ដំណើរការ Dummy Stream និង PeerJS ដើម្បីភ្ជាប់ចូលបន្ទប់
+  // ៥. បង្កើត Stream និងភ្ជាប់ទៅកាន់ Socket/PeerJS
   initDummyStream();
 
   if (myPeer && myPeer.id) {
@@ -809,7 +799,7 @@ function adminJoinRoom(roomId) {
     socket.emit('join-room', {
       roomId: currentRoomId,
       peerId: myId,
-      username: myUsername
+      username: myUsername || 'Admin'
     });
   } else {
     initPeerJS();
