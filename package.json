@@ -1,15 +1,18 @@
 {
   "name": "meeting-app",
   "version": "1.0.0",
-  "description": "Video Conference App",
+  "description": "Video meeting / screen-share / remote-control app (Render deploy)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
+  "engines": {
+    "node": ">=18.x"
+  },
   "dependencies": {
     "express": "^4.19.2",
-    "mongoose": "^8.3.1",
+    "socket.io": "^4.7.5",
     "peer": "^1.0.2",
-    "socket.io": "^4.7.5"
+    "mongoose": "^8.4.0"
   }
 }
