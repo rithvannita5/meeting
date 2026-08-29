@@ -21,6 +21,7 @@ const peerCalls = {};
 const userNamesMap = {};
 
 let isCameraOn = false;
+let isMicOn = true;
 let isScreenSharing = false;
 let dummyAnimFrame = null;
 let allRoomsList = [];
@@ -405,7 +406,6 @@ function toggleChat() {
 function showChatUserList() {
   const userList = document.getElementById('chatUserList');
   const msgContainer = document.getElementById('chatMessagesContainer');
-  const userItems = userList.querySelectorAll('.chat-user-item');
   
   // បង្ហាញ User List
   userList.style.display = 'block';
@@ -831,7 +831,8 @@ function addRemoteScreenVideo(peerId, stream, username) {
   card.appendChild(label);
   if (screenGrid) screenGrid.appendChild(card);
   
-  document.getElementById('screenTitle').style.display = 'block';
+  const screenTitle = document.getElementById('screenTitle');
+  if (screenTitle) screenTitle.style.display = 'block';
 }
 
 function removeRemoteScreenVideo(peerId) {
@@ -839,9 +840,10 @@ function removeRemoteScreenVideo(peerId) {
   if (card) card.remove();
   
   // លាក់ title ប្រសិនបើគ្មាន screen
-  const screenGrid = document.getElementById('screenGrid');
-  if (screenGrid && screenGrid.children.length === 0) {
-    document.getElementById('screenTitle').style.display = 'none';
+  const screenGridElem = document.getElementById('screenGrid');
+  const screenTitle = document.getElementById('screenTitle');
+  if (screenGridElem && screenGridElem.children.length === 0 && screenTitle) {
+    screenTitle.style.display = 'none';
   }
 }
 
@@ -850,6 +852,79 @@ function updateUserCount() {
   if (countElem) {
     const totalUsers = Object.keys(userNamesMap).length + 1;
     countElem.textContent = totalUsers;
+  }
+}
+
+// ============================================================
+// MEDIA TOGGLE & SCREEN SHARE
+// ============================================================
+
+function toggleMic() {
+  if (!localStream) return;
+  isMicOn = !isMicOn;
+  localStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
+  showToast(isMicOn ? '🎤 បានបើក Mic' : '🎙️❌ បានបិទ Mic', 'info');
+}
+
+async function toggleCamera() {
+  if (isCameraOn) {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      cameraStream = null;
+    }
+    isCameraOn = false;
+    initDummyStream();
+    showToast('📷 បានបិទកាមេរ៉ា', 'info');
+  } else {
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      isCameraOn = true;
+      if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
+      localStream = cameraStream;
+      if (localVideo) localVideo.srcObject = localStream;
+      
+      Object.keys(peerCalls).forEach(pId => {
+        const videoTrack = localStream.getVideoTracks()[0];
+        const sender = peerCalls[pId].peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) sender.replaceTrack(videoTrack);
+      });
+      showToast('📷 បានបើកកាមេរ៉ា', 'success');
+    } catch (err) {
+      showToast('❌ មិនអាចបើកកាមេរ៉ាបានទេ!', 'error');
+    }
+  }
+}
+
+async function toggleScreenShare() {
+  if (isScreenSharing) {
+    if (screenStream) {
+      screenStream.getTracks().forEach(track => track.stop());
+      screenStream = null;
+    }
+    isScreenSharing = false;
+    showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
+  } else {
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      isScreenSharing = true;
+      
+      Object.keys(userNamesMap).forEach(peerId => {
+        if (peerId !== myId && myPeer) {
+          myPeer.call(peerId, screenStream, {
+            metadata: { type: 'screen', username: myUsername }
+          });
+        }
+      });
+      
+      screenStream.getVideoTracks()[0].onended = () => {
+        isScreenSharing = false;
+        showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
+      };
+      
+      showToast('🖥️ កំពុងចែករំលែកអេក្រង់...', 'success');
+    } catch (err) {
+      showToast('❌ បោះបង់ការចែករំលែកអេក្រង់!', 'warning');
+    }
   }
 }
 
@@ -1018,8 +1093,232 @@ function selectRemoteTarget(targetId) {
 }
 
 // ============================================================
-// ADMIN FUNCTIONS
+// AUTHENTICATION & LOGIN MANAGEMENT
 // ============================================================
+
+async function login() {
+  var username = document.getElementById('username').value.trim();
+  var password = document.getElementById('password').value.trim();
+  var roomId = document.getElementById('roomSelect').value;
+
+  if (!username || !password) {
+    return showToast('សូមបំពេញ Username និង Password!', 'error');
+  }
+
+  pendingLoginData = { username: username, password: password, roomId: roomId };
+
+  try {
+    var res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pendingLoginData)
+    });
+    var data = await res.json();
+
+    if (data.requires2FA) {
+      showToast(data.message, 'warning');
+      document.getElementById('otp-modal').classList.remove('hidden');
+      return;
+    }
+
+    if (!data.success) {
+      return showToast(data.message, 'error');
+    }
+
+    finalizeLogin(data);
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការ Login!', 'error');
+  }
+}
+
+async function verify2FA() {
+  var otp = document.getElementById('otpInput').value.trim();
+  if (!otp) return showToast('សូមវាយបញ្ចូលលេខកូដ!', 'error');
+
+  try {
+    var res = await fetch('/api/verify-2fa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: pendingLoginData.username,
+        password: pendingLoginData.password,
+        otp: otp
+      })
+    });
+    var data = await res.json();
+
+    if (!data.success) return showToast(data.message, 'error');
+
+    document.getElementById('otp-modal').classList.add('hidden');
+    finalizeLogin(data);
+  } catch (err) {
+    showToast('លេខកូដមិនត្រឹមត្រូវទេ!', 'error');
+  }
+}
+
+function finalizeLogin(data) {
+  myUsername = data.user.username;
+  currentUserRole = data.user.role;
+  currentRoomId = (pendingLoginData && pendingLoginData.roomId) ? pendingLoginData.roomId : document.getElementById('roomSelect').value;
+
+  const mainBody = document.getElementById('mainBody');
+  if (mainBody) {
+    mainBody.style.justifyContent = 'flex-start';
+    mainBody.style.alignItems = 'stretch';
+  }
+
+  const authCard = document.getElementById('auth');
+  if (authCard) authCard.classList.add('hidden');
+
+  if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
+    const adminDash = document.getElementById('admin-dashboard');
+    if (adminDash) adminDash.classList.remove('hidden');
+    const adminRoleDisplay = document.getElementById('adminRoleDisplay');
+    if (adminRoleDisplay) adminRoleDisplay.textContent = currentUserRole.toUpperCase();
+    switchAdminTab('rooms');
+  } else {
+    startMeeting();
+  }
+  showToast('✅ ចូលប្រើប្រាស់បានជោគជ័យ!', 'success');
+}
+
+// ============================================================
+// MEETING ROOM & LEAVE ROOM MANAGEMENT
+// ============================================================
+
+function startMeeting() {
+  const mainBody = document.getElementById('mainBody');
+  if (mainBody) {
+    mainBody.style.justifyContent = 'flex-start';
+    mainBody.style.alignItems = 'stretch';
+  }
+
+  const roomContainer = document.getElementById('room-container');
+  if (roomContainer) {
+    roomContainer.classList.remove('hidden');
+    roomContainer.style.display = 'flex';
+  }
+
+  const welcomeText = document.getElementById('welcome-text');
+  if (welcomeText) {
+    welcomeText.textContent = `👋 សួស្តី ${myUsername || 'Admin'}! កំពុងស្ថិតក្នុងបន្ទប់៖ ${currentRoomId}`;
+  }
+
+  initDummyStream();
+
+  if (myPeer && myPeer.id) {
+    myId = myPeer.id;
+    socket.emit('join-room', { roomId: currentRoomId, peerId: myId, username: myUsername });
+  } else {
+    initPeerJS();
+  }
+}
+
+function leaveRoom() {
+  if (!confirm('តើអ្នកប្រាកដជាចង់ចាកចេញពីបន្ទប់នេះទេ?')) return;
+
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(track => track.stop());
+    cameraStream = null;
+  }
+  if (screenStream) {
+    screenStream.getTracks().forEach(track => track.stop());
+    screenStream = null;
+  }
+
+  if (peerCalls) {
+    Object.keys(peerCalls).forEach(pId => {
+      if (peerCalls[pId]) peerCalls[pId].close();
+    });
+  }
+  if (myPeer) {
+    myPeer.destroy();
+    myPeer = null;
+  }
+
+  if (socket && socketConnected) {
+    socket.emit('leave-room', { roomId: currentRoomId, peerId: myId });
+  }
+
+  const roomContainer = document.getElementById('room-container');
+  if (roomContainer) {
+    roomContainer.classList.add('hidden');
+    roomContainer.style.display = 'none';
+  }
+
+  const chatPanel = document.getElementById('chat-panel');
+  if (chatPanel) chatPanel.classList.add('hidden');
+
+  if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
+    const adminDash = document.getElementById('admin-dashboard');
+    if (adminDash) adminDash.classList.remove('hidden');
+    switchAdminTab('rooms');
+    showToast('🚪 បានចាកចេញមកកាន់ Dashboard!', 'warning');
+  } else {
+    location.reload();
+  }
+}
+
+function leaveMeeting() {
+  leaveRoom();
+}
+
+async function changeMyPassword() {
+  const oldPassword = prompt('សូមបញ្ចូល Password ចាស់របស់អ្នក៖');
+  if (oldPassword === null) return;
+
+  const newPassword = prompt('សូមបញ្ចូល Password ថ្មី៖');
+  if (newPassword === null) return;
+
+  if (!oldPassword.trim() || !newPassword.trim()) {
+    return showToast('សូមបំពេញ Password ឱ្យបានត្រឹមត្រូវ!', 'error');
+  }
+
+  try {
+    const res = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: myUsername,
+        oldPassword: oldPassword,
+        newPassword: newPassword
+      })
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      showToast('✅ ប្តូរ Password បានជោគជ័យ!', 'success');
+    } else {
+      showToast(data.message || '❌ ប្តូរ Password មិនបានសម្រេច!', 'error');
+    }
+  } catch (err) {
+    showToast('❌ មានបញ្ហាក្នុងការភ្ជាប់ទៅ Server!', 'error');
+  }
+}
+
+// ============================================================
+// ADMIN FUNCTIONS & MANAGEMENT
+// ============================================================
+
+function adminJoinRoom(roomId) {
+  currentRoomId = roomId;
+  const adminDash = document.getElementById('admin-dashboard');
+  if (adminDash) adminDash.classList.add('hidden');
+  startMeeting();
+}
+
+function logoutAdmin() {
+  if (confirm('តើអ្នកប្រាកដថាចង់ចាកចេញពីប្រព័ន្ធ (Logout) ទេ?')) {
+    location.reload();
+  }
+}
+function adminLogout() {
+  logoutAdmin();
+}
 
 function switchAdminTab(tab) {
   console.log('🔄 Switching to tab:', tab);
@@ -1063,7 +1362,30 @@ function switchAdminTab(tab) {
     }
     var tabBtnNewRoom = document.getElementById('tabBtnNewRoom');
     if (tabBtnNewRoom) tabBtnNewRoom.classList.add('active');
-    loadRooms();
+  }
+}
+
+async function createNewRoom() {
+  var roomName = document.getElementById('newRoomInput').value.trim();
+  if (!roomName) return showToast('សូមបញ្ចូលឈ្មោះបន្ទប់!', 'error');
+
+  try {
+    var res = await fetch('/api/rooms/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomName: roomName })
+    });
+    var data = await res.json();
+    if (data.success) {
+      showToast('✅ បង្កើតបន្ទប់បានជោគជ័យ!', 'success');
+      document.getElementById('newRoomInput').value = '';
+      loadRooms();
+      switchAdminTab('rooms');
+    } else {
+      showToast(data.message, 'error');
+    }
+  } catch (err) {
+    showToast('មានបញ្ហាក្នុងការបង្កើតបន្ទប់!', 'error');
   }
 }
 
@@ -1072,20 +1394,14 @@ async function loadRooms() {
     var res = await fetch('/api/rooms');
     var data = await res.json();
     allRoomsList = data.rooms;
-
     var select = document.getElementById('roomSelect');
-    var adminSelect = document.getElementById('userAssignedRoomSelect');
-
-    if (select) select.innerHTML = '';
-    if (adminSelect) adminSelect.innerHTML = '';
-
-    data.rooms.forEach(function(r) {
-      if (select) select.innerHTML += '<option value="' + r + '">' + r + '</option>';
-      if (adminSelect) adminSelect.innerHTML += '<option value="' + r + '">' + r + '</option>';
-    });
-  } catch (err) {
-    console.error('Error fetching rooms:', err);
-  }
+    if (select) {
+      select.innerHTML = '';
+      data.rooms.forEach(function(r) {
+        select.innerHTML += '<option value="' + r + '">' + r + '</option>';
+      });
+    }
+  } catch (err) {}
 }
 
 async function loadAdminRoomMonitor() {
@@ -1096,30 +1412,17 @@ async function loadAdminRoomMonitor() {
     if (!container) return;
     container.innerHTML = '';
 
-    if (!data.rooms || data.rooms.length === 0) {
-      container.innerHTML = '<p style="color:#64748b;">គ្មានបន្ទប់សកម្មទេ</p>';
-      return;
-    }
-
     data.rooms.forEach(function(room) {
       var isLive = room.userCount > 0;
-      var statusHtml = isLive 
-        ? '<span style="color:#10b981; font-weight:bold;">🟢 កំពុងសកម្ម (' + room.userCount + ' នាក់)</span><br><small style="color:#94a3b8;">👤 ' + (room.users ? room.users.join(', ') : '') + '</small>'
-        : '<span style="color:#64748b;">⚪ ទំនេរ (គ្មានមនុស្ស)</span>';
-
       container.innerHTML += `
         <div class="room-card ${isLive ? 'live' : ''}">
-          <h4 style="margin-bottom:6px;">បន្ទប់: ${room.roomId}</h4>
-          <p style="font-size:13px; margin-bottom:12px;">${statusHtml}</p>
-          <button onclick="adminJoinRoom('${room.roomId}')" class="btn-success" style="width:100%; font-size:13px;">
-            🚪 ចូលរួមបន្ទប់នេះ
-          </button>
+          <h4>បន្ទប់: ${room.roomId}</h4>
+          <p style="font-size:13px; margin: 8px 0; color: #cbd5e1;">${isLive ? '🟢 ' + room.userCount + ' នាក់កំពុងចូល' : '⚪ ទំនេរ'}</p>
+          <button onclick="adminJoinRoom('${room.roomId}')" class="btn-success" style="width: 100%;">🚪 ចូលមើលបន្ទប់នេះ</button>
         </div>
       `;
     });
-  } catch (err) {
-    console.error('Error loading rooms:', err);
-  }
+  } catch (err) {}
 }
 
 async function loadUsersTable() {
@@ -1132,779 +1435,81 @@ async function loadUsersTable() {
 
     data.users.forEach(function(user) {
       var isBlocked = user.isBlocked;
-      var statusText = isBlocked ? '<span style="color:#ef4444; font-weight:bold;">Blocked</span>' : '<span style="color:#10b981; font-weight:bold;">Active</span>';
-
-      var adminActions = '';
-      
-      if (user.role === 'admin') {
-        adminActions = '<span style="color:#64748b;">មិនអាចកែប្រែបាន</span>';
-      } else if (user.role === 'supervisor') {
-        if (currentUserRole === 'admin') {
-          adminActions = `
-            <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'user')">កែ Role</button>
-            <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
-            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
-          `;
-        } else {
-          adminActions = '<span style="color:#64748b;">មិនអាចកែប្រែបាន</span>';
-        }
-      } else {
-        if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
-          adminActions = `
-            <button class="action-btn btn-secondary" onclick="editUserRole('${user.id}', 'supervisor')">កែ Role</button>
-            <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user.id}')">${isBlocked ? 'Unblock' : 'Block'}</button>
-            <button class="action-btn btn-secondary" onclick="editUserRoom('${user.id}', '${user.assignedRoom}')">ប្តូរបន្ទប់</button>
-            <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
-            ${currentUserRole === 'admin' ? `<button class="action-btn btn-danger" onclick="deleteUser('${user.id}', '${user.username}')">លុប</button>` : ''}
-          `;
-        }
-      }
-
-      var roleColor = user.role === 'admin' ? '#f59e0b' : user.role === 'supervisor' ? '#48cae4' : '#10b981';
+      var adminActions = (user.role === 'admin') ? '<span style="color:#64748b;">មិនអាចកែប្រែ</span>' : `
+        <button class="action-btn ${isBlocked ? 'btn-success' : 'btn-warning'}" onclick="toggleBlockUser('${user.id}')">${isBlocked ? 'Unblock' : 'Block'}</button>
+        <button class="action-btn" style="background:#0284c7; color:white;" onclick="resetPassword('${user.id}', '${user.username}')">Reset Pwd</button>
+        ${currentUserRole === 'admin' ? `<button class="action-btn btn-danger" onclick="deleteUser('${user.id}', '${user.username}')">លុប</button>` : ''}
+      `;
 
       tbody.innerHTML += `
         <tr>
           <td><strong>${user.username}</strong></td>
-          <td><span style="color: ${roleColor}; font-weight:bold;">${user.role}</span></td>
+          <td>${user.role}</td>
           <td>${user.assignedRoom}</td>
-          <td>${statusText}</td>
+          <td>${isBlocked ? '<span style="color:#ef4444;">Blocked</span>' : '<span style="color:#10b981;">Active</span>'}</td>
           <td>${adminActions}</td>
         </tr>
       `;
     });
-  } catch (err) {
-    console.error('Error loading user table:', err);
-  }
-}
-
-// ============================================================
-// ADMIN JOIN ROOM
-// ============================================================
-function adminJoinRoom(roomId) {
-  currentRoomId = roomId;
-
-  const mainBody = document.getElementById('mainBody');
-  if (mainBody) {
-    mainBody.style.justifyContent = 'flex-start';
-    mainBody.style.alignItems = 'stretch';
-  }
-
-  const adminDash = document.getElementById('admin-dashboard');
-  if (adminDash) {
-    adminDash.classList.add('hidden');
-    adminDash.style.display = 'none';
-  }
-
-  const roomContainer = document.getElementById('room-container');
-  if (roomContainer) {
-    roomContainer.classList.remove('hidden');
-    roomContainer.style.display = 'flex';
-  }
-
-  const welcomeText = document.getElementById('welcome-text');
-  if (welcomeText) {
-    welcomeText.textContent = `👋 សួស្តី Admin! កំពុងមើលបន្ទប់៖ ${currentRoomId}`;
-  }
-
-  initDummyStream();
-
-  if (myPeer && myPeer.id) {
-    myId = myPeer.id;
-    socket.emit('join-room', {
-      roomId: currentRoomId,
-      peerId: myId,
-      username: myUsername || 'Admin'
-    });
-  } else {
-    initPeerJS();
-  }
-
-  showToast('🚪 បានចូលរួមបន្ទប់៖ ' + currentRoomId, 'success');
-}
-
-// ============================================================
-// LEAVE ROOM
-// ============================================================
-function leaveRoom() {
-  if (!confirm('តើអ្នកប្រាកដជាចង់ចាកចេញពីបន្ទប់នេះទេ?')) return;
-
-  if (localStream) {
-    localStream.getTracks().forEach(track => track.stop());
-    localStream = null;
-  }
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop());
-    cameraStream = null;
-  }
-  if (screenStream) {
-    screenStream.getTracks().forEach(track => track.stop());
-    screenStream = null;
-  }
-
-  if (peerCalls) {
-    Object.keys(peerCalls).forEach(function(peerId) {
-      if (peerCalls[peerId]) {
-        peerCalls[peerId].close();
-        delete peerCalls[peerId];
-      }
-    });
-  }
-  if (myPeer) {
-    myPeer.destroy();
-    myPeer = null;
-  }
-
-  if (socket && socketConnected) {
-    socket.emit('leave-room', { 
-      roomId: currentRoomId, 
-      peerId: myId 
-    });
-  }
-
-  const videoGrid = document.getElementById('videoGrid');
-  const screenGrid = document.getElementById('screenGrid');
-  
-  if (videoGrid) {
-    const myVideo = document.getElementById('myVideoContainer');
-    videoGrid.innerHTML = '';
-    if (myVideo) videoGrid.appendChild(myVideo);
-  }
-  if (screenGrid) screenGrid.innerHTML = '';
-
-  const roomContainer = document.getElementById('room-container');
-  const chatPanel = document.getElementById('chat-panel');
-  
-  if (roomContainer) {
-    roomContainer.classList.add('hidden');
-    roomContainer.style.display = 'none';
-  }
-  if (chatPanel) {
-    chatPanel.classList.add('hidden');
-    chatPanel.style.display = 'none';
-  }
-
-  if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
-    const adminDash = document.getElementById('admin-dashboard');
-    if (adminDash) {
-      adminDash.classList.remove('hidden');
-      adminDash.style.display = 'block';
-    }
-    
-    const mainBody = document.getElementById('mainBody');
-    if (mainBody) {
-      mainBody.style.justifyContent = 'flex-start';
-      mainBody.style.alignItems = 'stretch';
-    }
-    
-    switchAdminTab('rooms');
-    loadAdminRoomMonitor();
-    
-    showToast('🚪 បានចាកចេញពីបន្ទប់', 'warning');
-  } else {
-    const authCard = document.getElementById('auth');
-    if (authCard) {
-      authCard.classList.remove('hidden');
-      authCard.style.display = 'block';
-    }
-    
-    const mainBody = document.getElementById('mainBody');
-    if (mainBody) {
-      mainBody.style.justifyContent = 'center';
-      mainBody.style.alignItems = 'center';
-    }
-    
-    showToast('🚪 បានចាកចេញពីបន្ទប់', 'warning');
-  }
-
-  currentRoomId = '';
-  isCameraOn = false;
-  isScreenSharing = false;
-  isBeingControlled = false;
-  isRemoteControlActive = false;
-  chatTargetPeerId = null;
-  
-  if (remotePointer) {
-    remotePointer.remove();
-    remotePointer = null;
-  }
-}
-
-function leaveMeeting() {
-  leaveRoom();
-}
-
-// ============================================================
-// ADMIN LOGOUT
-// ============================================================
-function logoutAdmin() {
-  if (!confirm('តើអ្នកប្រាកដថាចង់ចាកចេញពី Admin Dashboard ទេ?')) return;
-
-  if (localStream) {
-    localStream.getTracks().forEach(track => track.stop());
-    localStream = null;
-  }
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop());
-    cameraStream = null;
-  }
-  if (screenStream) {
-    screenStream.getTracks().forEach(track => track.stop());
-    screenStream = null;
-  }
-
-  if (myPeer) {
-    myPeer.destroy();
-    myPeer = null;
-  }
-
-  if (socket && socketConnected) {
-    socket.emit('logout', { 
-      peerId: myId,
-      username: myUsername 
-    });
-    socket.disconnect();
-  }
-
-  myUsername = '';
-  currentUserRole = '';
-  currentRoomId = '';
-  myId = '';
-  pendingLoginData = null;
-  isCameraOn = false;
-  isScreenSharing = false;
-  chatTargetPeerId = null;
-
-  const authCard = document.getElementById('auth');
-  if (authCard) {
-    authCard.classList.remove('hidden');
-    authCard.style.display = 'block';
-  }
-
-  const adminDash = document.getElementById('admin-dashboard');
-  if (adminDash) {
-    adminDash.classList.add('hidden');
-    adminDash.style.display = 'none';
-  }
-
-  const roomContainer = document.getElementById('room-container');
-  if (roomContainer) {
-    roomContainer.classList.add('hidden');
-    roomContainer.style.display = 'none';
-  }
-
-  const mainBody = document.getElementById('mainBody');
-  if (mainBody) {
-    mainBody.style.justifyContent = 'center';
-    mainBody.style.alignItems = 'center';
-  }
-
-  const videoGrid = document.getElementById('videoGrid');
-  const screenGrid = document.getElementById('screenGrid');
-  if (videoGrid) videoGrid.innerHTML = '';
-  if (screenGrid) screenGrid.innerHTML = '';
-
-  showToast('👋 បានចាកចេញដោយជោគជ័យ!', 'info');
-
-  setTimeout(function() {
-    window.location.reload();
-  }, 1000);
-}
-
-function adminLogout() {
-  logoutAdmin();
-}
-
-// ============================================================
-// ADMIN CRUD OPERATIONS
-// ============================================================
-async function toggleBlockUser(id) {
-  try {
-    var res = await fetch('/api/users/' + id + '/toggle-block', { method: 'PUT' });
-    var data = await res.json();
-    showToast(data.message, 'success');
-    await loadUsersTable();
   } catch (err) {}
+}
+
+async function toggleBlockUser(id) {
+  var res = await fetch('/api/users/' + id + '/toggle-block', { method: 'PUT' });
+  var data = await res.json();
+  showToast(data.message, 'success');
+  loadUsersTable();
 }
 
 async function deleteUser(id, username) {
   if (!confirm('តើអ្នកប្រាកដថាចង់លុប User "' + username + '" ទេ?')) return;
-  try {
-    var res = await fetch('/api/users/' + id, { method: 'DELETE' });
-    var data = await res.json();
-    showToast(data.message, 'success');
-    await loadUsersTable();
-  } catch (err) {}
+  var res = await fetch('/api/users/' + id, { method: 'DELETE' });
+  var data = await res.json();
+  showToast(data.message, 'success');
+  loadUsersTable();
 }
 
 async function resetPassword(id, username) {
   var newPassword = prompt('បញ្ចូលលេខសម្ងាត់ថ្មីសម្រាប់ ' + username + ':');
-  if (!newPassword || newPassword.length < 4) {
-    showToast('ពាក្យសម្ងាត់ត្រូវមានយ៉ាងតិច ៤ តួ!', 'error');
-    return;
-  }
-  try {
-    var res = await fetch('/api/users/' + id + '/reset-password', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ newPassword: newPassword })
-    });
-    var data = await res.json();
-    showToast(data.message, data.success ? 'success' : 'error');
-    if (data.success) {
-      await loadUsersTable();
-    }
-  } catch (err) {
-    showToast('មានបញ្ហាក្នុងការកំណត់ពាក្យសម្ងាត់!', 'error');
-  }
+  if (!newPassword) return;
+  var res = await fetch('/api/users/' + id + '/reset-password', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ newPassword: newPassword })
+  });
+  var data = await res.json();
+  showToast(data.message, 'success');
 }
 
-async function editUserRoom(id, currentRoom) {
-  var newRoom = prompt('បញ្ចូលបន្ទប់ថ្មី (បន្ទប់បច្ចុប្បន្ន: ' + currentRoom + '):\nជម្រើស: ' + allRoomsList.join(', '));
-  if (!newRoom) return;
-  try {
-    var res = await fetch('/api/users/' + id + '/edit-room', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ newRoom: newRoom })
-    });
-    var data = await res.json();
-    showToast(data.message, 'success');
-    await loadUsersTable();
-  } catch (err) {}
-}
+async function createUser() {
+  var u = document.getElementById('newUsername').value.trim();
+  var p = document.getElementById('newPassword').value.trim();
+  var r = document.getElementById('newRole').value;
+  var rm = document.getElementById('newAssignedRoom').value;
 
-async function editUserRole(id, newRole) {
-  if (currentUserRole !== 'admin') {
-    showToast('អ្នកគ្មានសិទ្ធិកែប្រែ Role ទេ!', 'error');
-    return;
-  }
-  
-  if (!confirm('តើអ្នកប្រាកដថាចង់ប្តូរ Role ទៅជា "' + newRole + '" ទេ?')) return;
-  
-  try {
-    var res = await fetch('/api/users/' + id + '/edit-role', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ newRole: newRole })
-    });
-    var data = await res.json();
-    showToast(data.message, data.success ? 'success' : 'error');
-    if (data.success) await loadUsersTable();
-  } catch (err) {
-    showToast('មានបញ្ហាក្នុងការប្តូរ Role!', 'error');
-  }
-}
+  if (!u || !p) return showToast('សូមបំពេញ Username និង Password!', 'error');
 
-async function createNewUser() {
-  var username = document.getElementById('newUsername').value.trim();
-  var password = document.getElementById('newPassword').value.trim();
-  var assignedRoom = document.getElementById('userAssignedRoomSelect').value;
-  var role = document.getElementById('newUserRoleSelect').value;
-  
-  if (!username || !password) {
-    showToast('សូមបំពេញព័ត៌មាន!', 'error');
-    return;
-  }
-  
-  try {
-    var res = await fetch('/api/create-user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: username, password: password, assignedRoom: assignedRoom, role: role })
-    });
-    var data = await res.json();
-    showToast(data.message, data.success ? 'success' : 'error');
-    if (data.success) {
-      document.getElementById('newUsername').value = '';
-      document.getElementById('newPassword').value = '';
-      await loadUsersTable();
-      await loadRooms();
-    }
-  } catch (err) {}
-}
-
-async function createNewRoom() {
-  var roomId = document.getElementById('newRoomId').value.trim();
-  if (!roomId) {
-    showToast('សូមបញ្ចូលឈ្មោះបន្ទប់!', 'error');
-    return;
-  }
-  try {
-    var res = await fetch('/api/create-room', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomId: roomId })
-    });
-    var data = await res.json();
-    showToast(data.message, data.success ? 'success' : 'error');
-    if (data.success) {
-      document.getElementById('newRoomId').value = '';
-      await loadRooms();
-      if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
-        loadAdminRoomMonitor();
-      }
-    }
-  } catch (err) {}
-}
-
-// ============================================================
-// AUTHENTICATION & LOGIN
-// ============================================================
-async function login() {
-  var username = document.getElementById('username').value.trim();
-  var password = document.getElementById('password').value.trim();
-  var roomId = document.getElementById('roomSelect').value;
-
-  if (!username || !password) {
-    showToast('សូមបំពេញ Username និង Password!', 'error');
-    return;
-  }
-  pendingLoginData = { username: username, password: password, roomId: roomId };
-
-  try {
-    var res = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(pendingLoginData)
-    });
-    var data = await res.json();
-
-    if (data.requires2FA) {
-      showToast(data.message, 'warning');
-      document.getElementById('otp-modal').classList.remove('hidden');
-      return;
-    }
-
-    if (!data.success) {
-      showToast(data.message, 'error');
-      return;
-    }
-    finalizeLogin(data);
-  } catch (err) {
-    showToast('មានបញ្ហាក្នុងការ Login!', 'error');
-  }
-}
-
-async function verify2FA() {
-  var otp = document.getElementById('otpInput').value.trim();
-  if (!otp) {
-    showToast('សូមវាយបញ្ចូលលេខកូដ!', 'error');
-    return;
-  }
-
-  try {
-    var res = await fetch('/api/verify-2fa', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: pendingLoginData.username, password: pendingLoginData.password, otp: otp })
-    });
-    var data = await res.json();
-
-    if (!data.success) {
-      showToast(data.message, 'error');
-      return;
-    }
-    document.getElementById('otp-modal').classList.add('hidden');
-    finalizeLogin(data);
-  } catch (err) {
-    showToast('លេខកូដមិនត្រឹមត្រូវទេ!', 'error');
-  }
-}
-
-function cancel2FA() {
-  document.getElementById('otp-modal').classList.add('hidden');
-  pendingLoginData = null;
-}
-
-function finalizeLogin(data) {
-  myUsername = data.user.username;
-  currentUserRole = data.user.role;
-  currentRoomId = pendingLoginData.roomId || document.getElementById('roomSelect').value;
-
-  const mainBody = document.getElementById('mainBody');
-  if (mainBody) {
-    mainBody.style.justifyContent = 'flex-start';
-    mainBody.style.alignItems = 'stretch';
-  }
-
-  const authCard = document.getElementById('auth');
-  if (authCard) authCard.classList.add('hidden');
-
-  if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
-    const adminDash = document.getElementById('admin-dashboard');
-    if (adminDash) {
-      adminDash.classList.remove('hidden');
-      adminDash.style.display = 'block';
-    }
-    
-    const adminRoleDisplay = document.getElementById('adminRoleDisplay');
-    if (adminRoleDisplay) adminRoleDisplay.textContent = currentUserRole.toUpperCase();
-    
-    switchAdminTab('rooms');
-    showToast('✅ ចូលប្រើប្រាស់ជា ' + currentUserRole + ' បានជោគជ័យ!', 'success');
-  } else {
-    const roomContainer = document.getElementById('room-container');
-    if (roomContainer) {
-      roomContainer.classList.remove('hidden');
-      roomContainer.style.display = 'flex';
-    }
-
-    const welcomeText = document.getElementById('welcome-text');
-    if (welcomeText) {
-      welcomeText.textContent = `👋 សួស្តី ${myUsername}! កំពុងស្ថិតក្នុងបន្ទប់៖ ${currentRoomId}`;
-    }
-
-    initDummyStream();
-
-    if (myPeer && myPeer.id) {
-      myId = myPeer.id;
-      socket.emit('join-room', {
-        roomId: currentRoomId,
-        peerId: myId,
-        username: myUsername
-      });
-    } else {
-      initPeerJS();
-    }
-    
-    showToast('✅ ចូលប្រើប្រាស់បានជោគជ័យ!', 'success');
-  }
-}
-
-// ============================================================
-// TOGGLE CAMERA & MIC
-// ============================================================
-async function toggleCamera() {
-  const btn = document.getElementById('camBtnIcon');
-  if (!isCameraOn) {
-    try {
-      cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      const videoTrack = cameraStream.getVideoTracks()[0];
-      const audioTrack = cameraStream.getAudioTracks()[0];
-
-      if (localStream) {
-        if (videoTrack) {
-          const oldVideo = localStream.getVideoTracks()[0];
-          if (oldVideo) localStream.removeTrack(oldVideo);
-          localStream.addTrack(videoTrack);
-        }
-        if (audioTrack) {
-          const oldAudio = localStream.getAudioTracks()[0];
-          if (oldAudio) localStream.removeTrack(oldAudio);
-          localStream.addTrack(audioTrack);
-        }
-      } else {
-        localStream = cameraStream;
-      }
-
-      if (localVideo) localVideo.srcObject = localStream;
-      
-      // ជំនួស Track សម្រាប់ Call ទាំងអស់
-      for (let pId in peerCalls) {
-        const pc = peerCalls[pId].peerConnection;
-        if (pc) {
-          const senders = pc.getSenders();
-          const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-          if (videoSender && videoTrack) {
-            videoSender.replaceTrack(videoTrack);
-          }
-        }
-      }
-
-      isCameraOn = true;
-      if (btn) {
-        btn.classList.remove('off');
-        btn.innerHTML = '📷';
-        btn.title = 'បិទកាមេរ៉ា';
-      }
-      showToast('📷 កាមេរ៉ាត្រូវបានបើក', 'success');
-    } catch (err) {
-      showToast('❌ មិនអាចបើកកាមេរ៉ាបានទេ!', 'error');
-    }
-  } else {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-      cameraStream = null;
-    }
-    isCameraOn = false;
-    if (btn) {
-      btn.classList.add('off');
-      btn.innerHTML = '🚫';
-      btn.title = 'បើកកាមេរ៉ា';
-    }
-    initDummyStream();
-    showToast('📷 កាមេរ៉ាត្រូវបានបិទ', 'info');
-  }
-}
-
-function toggleMic() {
-  const btn = document.getElementById('micBtnIcon');
-  if (!localStream || localStream.getAudioTracks().length === 0) {
-    showToast('ឧបករណ៍របស់អ្នកមិនមាន Microphone ទេ!', 'error');
-    return;
-  }
-  
-  const audioTrack = localStream.getAudioTracks()[0];
-  audioTrack.enabled = !audioTrack.enabled;
-  
-  if (audioTrack.enabled) {
-    btn.classList.remove('off');
-    btn.innerHTML = '🎤';
-    btn.title = 'បិទមេក្រូ';
-    showToast('🎤 មេក្រូបានបើក', 'info');
-  } else {
-    btn.classList.add('off');
-    btn.innerHTML = '🔇';
-    btn.title = 'បើកមេក្រូ';
-    showToast('🔇 មេក្រូបានបិទ', 'info');
-  }
-}
-
-// ============================================================
-// TOGGLE SCREEN SHARE
-// ============================================================
-async function toggleScreenShare() {
-  const btn = document.getElementById('screenBtn');
-  if (!isScreenSharing) {
-    try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({ 
-        video: true,
-        audio: false
-      });
-      
-      isScreenSharing = true;
-      btn.innerHTML = '🛑 Stop Screen';
-      btn.style.background = '#ef4444';
-      btn.style.color = 'white';
-
-      // ផ្ញើ Screen Stream ទៅអ្នកដទៃ
-      for (let pId in userNamesMap) {
-        if (pId !== myId && myPeer) {
-          const call = myPeer.call(pId, screenStream, { 
-            metadata: { type: 'screen', username: myUsername } 
-          });
-          call.on('stream', function(remoteStream) {
-            addRemoteScreenVideo(pId, remoteStream, userNamesMap[pId]);
-          });
-        }
-      }
-
-      // បង្ហាញ Screen នៅ Local
-      const screenVideo = document.createElement('video');
-      screenVideo.autoplay = true;
-      screenVideo.playsInline = true;
-      screenVideo.srcObject = screenStream;
-      
-      const screenContainer = document.createElement('div');
-      screenContainer.className = 'video-box screen-box';
-      screenContainer.id = 'my-screen';
-      screenContainer.innerHTML = `
-        <div class="name-tag">🖥️ អេក្រង់របស់អ្នក</div>
-      `;
-      screenContainer.prepend(screenVideo);
-      
-      document.getElementById('screenGrid').appendChild(screenContainer);
-      document.getElementById('screenTitle').style.display = 'block';
-
-      screenStream.getVideoTracks()[0].onended = function() {
-        toggleScreenShare();
-      };
-
-      showToast('🖥️ បានចាប់ផ្ដើមចែករំលែក Screen', 'success');
-    } catch (err) {
-      console.error(err);
-      showToast('❌ មិនអាចចែករំលែក Screen បានទេ!', 'error');
-    }
-  } else {
-    // បញ្ឈប់ការចែករំលែក
-    stopScreenSharing();
-  }
-}
-
-function stopScreenSharing() {
-  if (screenStream) {
-    screenStream.getTracks().forEach(track => track.stop());
-    screenStream = null;
-  }
-  isScreenSharing = false;
-  
-  const btn = document.getElementById('screenBtn');
-  btn.innerHTML = '🖥️ Share Screen';
-  btn.style.background = '#f59e0b';
-  btn.style.color = '#000';
-  
-  document.getElementById('my-screen')?.remove();
-  
-  // ពិនិត្យមើលថាតើមាន Screen អ្នកផ្សេងនៅសល់ទេ
-  const screenGrid = document.getElementById('screenGrid');
-  if (screenGrid && screenGrid.children.length === 0) {
-    document.getElementById('screenTitle').style.display = 'none';
-  }
-  
-  showToast('🖥️ បានបញ្ឈប់ការចែករំលែក Screen', 'info');
-}
-
-// ============================================================
-// CHANGE MY PASSWORD
-// ============================================================
-function changeMyPassword() {
-  const oldPassword = prompt('បញ្ចូល Password ចាស់:');
-  if (!oldPassword) return;
-  
-  const newPassword = prompt('បញ្ចូល Password ថ្មី (យ៉ាងតិច 4 តួ):');
-  if (!newPassword || newPassword.length < 4) {
-    showToast('ពាក្យសម្ងាត់ត្រូវមានយ៉ាងតិច ៤ តួ!', 'error');
-    return;
-  }
-  
-  const confirmPassword = prompt('បញ្ចូល Password ថ្មីម្តងទៀត:');
-  if (newPassword !== confirmPassword) {
-    showToast('Password មិនត្រូវគ្នា!', 'error');
-    return;
-  }
-  
-  fetch('/api/change-password', {
+  var res = await fetch('/api/users/create', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      username: myUsername,
-      oldPassword: oldPassword,
-      newPassword: newPassword
-    })
-  })
-  .then(res => res.json())
-  .then(data => {
-    showToast(data.message, data.success ? 'success' : 'error');
-  })
-  .catch(() => {
-    showToast('មានបញ្ហាក្នុងការប្តូរ Password!', 'error');
+    body: JSON.stringify({ username: u, password: p, role: r, assignedRoom: rm })
   });
+  var data = await res.json();
+
+  if (data.success) {
+    showToast('✅ បង្កើត User បានជោគជ័យ!', 'success');
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newPassword').value = '';
+    loadUsersTable();
+  } else {
+    showToast(data.message, 'error');
+  }
 }
 
 // ============================================================
-// INITIALIZATION
+// APP INITIALIZATION
 // ============================================================
 window.addEventListener('DOMContentLoaded', function() {
-  console.log('🚀 App starting...');
   connectSocket();
   loadRooms();
-  
-  // Chat Input Enter Key
-  const chatInput = document.getElementById('chatInput');
-  if (chatInput) {
-    chatInput.addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') {
-        sendPrivateMessage();
-      }
-    });
-  }
-  
-  // Click outside to close chat
-  document.addEventListener('click', function(e) {
-    const chatPanel = document.getElementById('chat-panel');
-    const chatBtn = document.getElementById('chatToggleBtn');
-    if (isChatOpen && chatPanel && !chatPanel.contains(e.target) && !chatBtn.contains(e.target)) {
-      // Don't auto close, user should click close button
-    }
-  });
 });
