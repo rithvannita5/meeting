@@ -612,10 +612,15 @@ setInterval(() => {
 
 // Keep-alive for Render
 setInterval(() => {
-  const https = require('https');
-  const hostname = process.env.RENDER_EXTERNAL_HOSTNAME || 'meeting-mu6x.onrender.com';
-  https.get(`https://${hostname}/ping`, () => {}).on('error', () => {});
-}, 60000);
+  try {
+    const hostname = process.env.RENDER_EXTERNAL_HOSTNAME || 'meeting-mu6x.onrender.com';
+    const url = `https://${hostname}/ping`;
+    fetch(url, { 
+      method: 'GET',
+      headers: { 'Cache-Control': 'no-cache' }
+    }).catch(() => {});
+  } catch (e) {}
+}, 30000); // រៀងរាល់ 30 វិនាទី
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
