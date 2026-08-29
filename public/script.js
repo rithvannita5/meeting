@@ -48,13 +48,13 @@ let remoteControlRequestId = null;
 let isBeingControlled = false;
 let remotePointer = null;
 
-// ✅ FIX: បន្ថែម TURN servers បន្ថែមសម្រាប់ប្រសិទ្ធភាពឆ្លង Network
-const ICE_SERVERS = [
+// ============================================================
+// FALLBACK ICE SERVERS (ប្រើបើ Cloudflare មិនដំណើរការ)
+// ============================================================
+const ICE_SERVERS_FALLBACK = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
-  { urls: 'stun:stun4.l.google.com:19302' },
   {
     urls: 'turn:openrelay.metered.ca:80',
     username: 'openrelayproject',
@@ -62,11 +62,6 @@ const ICE_SERVERS = [
   },
   {
     urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
     username: 'openrelayproject',
     credential: 'openrelayproject'
   }
@@ -646,94 +641,192 @@ function attachIceDiagnostics(call, peerId, label) {
   };
 }
 
-function initPeerJS() {
-  const isSecure = window.location.protocol === 'https:';
-  myPeer = new Peer(undefined, {
-    host: window.location.hostname,
-    port: isSecure ? 443 : (window.location.port || 80),
-    path: '/peerjs',
-    secure: isSecure,
-    debug: 2,
-    config: {
-      iceServers: ICE_SERVERS
-    }
-  });
-
-  myPeer.on('open', function(id) {
-    myId = id;
-    console.log('✅ PeerJS Connected with ID:', myId);
+// ============================================================
+// INIT PEERJS WITH CLOUDFLARE TURN
+// ============================================================
+async function initPeerJS() {
+  try {
+    console.log('🔄 Fetching Cloudflare TURN credentials...');
     
-    if (socket && socketConnected && currentRoomId && myUsername) {
-      socket.emit('join-room', {
-        roomId: currentRoomId,
-        peerId: myId,
-        username: myUsername
-      });
-    }
-  });
-
-  myPeer.on('call', function(call) {
-    console.log('📞 Incoming call from:', call.peer, 'metadata:', call.metadata);
+    const response = await fetch('/api/turn-credentials');
+    const data = await response.json();
     
-    if (localStream) {
-      call.answer(localStream);
+    let iceServers = ICE_SERVERS_FALLBACK;
+    
+    if (data.iceServers && data.iceServers.length > 0) {
+      console.log('✅ Using Cloudflare TURN servers');
+      iceServers = data.iceServers;
+      iceServers.push({ urls: 'stun:stun.cloudflare.com:3478' });
+      iceServers.push({ urls: 'stun:stun.l.google.com:19302' });
     } else {
-      initDummyStream();
-      call.answer(localStream);
+      console.log('⚠️ Using fallback TURN servers');
+      showToast('⚠️ Using fallback TURN servers', 'warning');
     }
 
-    const type = (call.metadata && call.metadata.type) || 'video';
-    attachIceDiagnostics(call, call.peer, type === 'screen' ? 'screen (incoming)' : 'video (incoming)');
+    const isSecure = window.location.protocol === 'https:';
+    const hostname = window.location.hostname;
+    const port = isSecure ? 443 : (window.location.port || 80);
     
-    call.on('stream', function(remoteStream) {
-      console.log('📺 Received remote stream from:', call.peer, 'type:', type);
-      const callerUsername = (call.metadata && call.metadata.username) || 'User';
-      
-      if (type === 'screen') {
-        addRemoteScreenVideo(call.peer, remoteStream, callerUsername);
-      } else {
-        attachRemoteStream(call.peer, remoteStream);
+    console.log(`🔧 Creating PeerJS with host: ${hostname}, port: ${port}, secure: ${isSecure}`);
+    
+    myPeer = new Peer(undefined, {
+      host: hostname,
+      port: port,
+      path: '/peerjs',
+      secure: isSecure,
+      debug: 2,
+      config: {
+        iceServers: iceServers,
+        iceTransportPolicy: 'all'
       }
     });
 
-    call.on('error', function(err) {
-      console.log('❌ Call error with', call.peer, err);
+    // ===== PeerJS Events =====
+    myPeer.on('open', function(id) {
+      myId = id;
+      console.log('✅ PeerJS Connected with ID:', myId);
+      
+      if (socket && socketConnected && currentRoomId && myUsername) {
+        socket.emit('join-room', {
+          roomId: currentRoomId,
+          peerId: myId,
+          username: myUsername
+        });
+      }
     });
 
-    call.on('close', function() {
-      console.log('Call closed with:', call.peer);
-      removeRemoteVideo(call.peer);
-      removeRemoteScreenVideo(call.peer);
-      delete peerCalls[call.peer];
+    myPeer.on('call', function(call) {
+      console.log('📞 Incoming call from:', call.peer, 'metadata:', call.metadata);
+      
+      if (localStream) {
+        call.answer(localStream);
+      } else {
+        initDummyStream();
+        call.answer(localStream);
+      }
+
+      const type = (call.metadata && call.metadata.type) || 'video';
+      attachIceDiagnostics(call, call.peer, type === 'screen' ? 'screen (incoming)' : 'video (incoming)');
+      
+      call.on('stream', function(remoteStream) {
+        console.log('📺 Received remote stream from:', call.peer, 'type:', type);
+        const callerUsername = (call.metadata && call.metadata.username) || 'User';
+        
+        if (type === 'screen') {
+          addRemoteScreenVideo(call.peer, remoteStream, callerUsername);
+        } else {
+          attachRemoteStream(call.peer, remoteStream);
+        }
+      });
+
+      call.on('error', function(err) {
+        console.log('❌ Call error with', call.peer, err);
+      });
+
+      call.on('close', function() {
+        console.log('Call closed with:', call.peer);
+        removeRemoteVideo(call.peer);
+        removeRemoteScreenVideo(call.peer);
+        delete peerCalls[call.peer];
+      });
+
+      peerCalls[call.peer] = call;
     });
 
-    peerCalls[call.peer] = call;
-  });
-
-  myPeer.on('error', function(err) {
-    console.error('❌ PeerJS Error:', err);
-    if (err && (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'unavailable-id')) {
-      showToast('⚠️ បញ្ហាភ្ជាប់ទៅ Signaling Server, កំពុងព្យាយាមឡើងវិញ...', 'warning');
-      setTimeout(function() {
-        if (!myPeer || myPeer.destroyed) initPeerJS();
-      }, 3000);
-    }
-  });
-
-  myPeer.on('disconnected', function() {
-    console.log('🔌 PeerJS signaling disconnected, reconnecting...');
-    if (myPeer && !myPeer.destroyed) {
-      try { 
-        myPeer.reconnect(); 
-      } catch (e) { 
-        console.log('Reconnect failed:', e);
+    myPeer.on('error', function(err) {
+      console.error('❌ PeerJS Error:', err);
+      if (err && (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error')) {
+        showToast('⚠️ Signaling server connection issue, retrying...', 'warning');
         setTimeout(function() {
-          if (myPeer) myPeer.destroy();
-          initPeerJS();
+          if (!myPeer || myPeer.destroyed) {
+            initPeerJS();
+          }
         }, 3000);
       }
+    });
+
+    myPeer.on('disconnected', function() {
+      console.log('🔌 PeerJS disconnected, reconnecting...');
+      if (myPeer && !myPeer.destroyed) {
+        try { 
+          myPeer.reconnect(); 
+        } catch (e) { 
+          console.log('Reconnect failed:', e);
+          setTimeout(function() {
+            if (myPeer) myPeer.destroy();
+            initPeerJS();
+          }, 3000);
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to initialize PeerJS with Cloudflare TURN:', error);
+    showToast('⚠️ Using fallback TURN servers', 'warning');
+    
+    try {
+      const isSecure = window.location.protocol === 'https:';
+      myPeer = new Peer(undefined, {
+        host: window.location.hostname,
+        port: isSecure ? 443 : (window.location.port || 80),
+        path: '/peerjs',
+        secure: isSecure,
+        debug: 2,
+        config: {
+          iceServers: ICE_SERVERS_FALLBACK
+        }
+      });
+      
+      myPeer.on('open', function(id) {
+        myId = id;
+        console.log('✅ PeerJS (fallback) Connected with ID:', myId);
+        if (socket && socketConnected && currentRoomId && myUsername) {
+          socket.emit('join-room', {
+            roomId: currentRoomId,
+            peerId: myId,
+            username: myUsername
+          });
+        }
+      });
+      
+      myPeer.on('call', function(call) {
+        if (localStream) {
+          call.answer(localStream);
+        } else {
+          initDummyStream();
+          call.answer(localStream);
+        }
+        const type = (call.metadata && call.metadata.type) || 'video';
+        call.on('stream', function(remoteStream) {
+          if (type === 'screen') {
+            addRemoteScreenVideo(call.peer, remoteStream, (call.metadata && call.metadata.username) || 'User');
+          } else {
+            attachRemoteStream(call.peer, remoteStream);
+          }
+        });
+        call.on('close', function() {
+          removeRemoteVideo(call.peer);
+          removeRemoteScreenVideo(call.peer);
+          delete peerCalls[call.peer];
+        });
+        peerCalls[call.peer] = call;
+      });
+      
+      myPeer.on('error', function(err) {
+        console.error('❌ PeerJS (fallback) Error:', err);
+      });
+      
+      myPeer.on('disconnected', function() {
+        if (myPeer && !myPeer.destroyed) {
+          try { myPeer.reconnect(); } catch (e) {}
+        }
+      });
+      
+    } catch (fallbackError) {
+      console.error('❌ Fallback PeerJS also failed:', fallbackError);
+      showToast('❌ Could not establish connection', 'error');
     }
-  });
+  }
 }
 
 function connectToUser(peerId) {
@@ -936,7 +1029,6 @@ async function toggleScreenShare() {
     }
     isScreenSharing = false;
     showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
-    // ✅ FIX: លុប screen stream ចេញពី grid
     const screenGridElem = document.getElementById('screenGrid');
     if (screenGridElem) screenGridElem.innerHTML = '';
     const screenTitle = document.getElementById('screenTitle');
@@ -946,7 +1038,6 @@ async function toggleScreenShare() {
       screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       isScreenSharing = true;
       
-      // ✅ FIX: ផ្ញើ screen stream ទៅកាន់អ្នកប្រើទាំងអស់
       Object.keys(userNamesMap).forEach(peerId => {
         if (peerId !== myId && myPeer) {
           const call = myPeer.call(peerId, screenStream, {
@@ -957,11 +1048,9 @@ async function toggleScreenShare() {
         }
       });
       
-      // ✅ FIX: បង្ហាញ screen stream នៅលើ local
       const screenTitle = document.getElementById('screenTitle');
       if (screenTitle) screenTitle.style.display = 'block';
       
-      // ✅ FIX: បង្កើត video element សម្រាប់ local screen share
       const existingLocalScreen = document.getElementById('local-screen');
       if (existingLocalScreen) existingLocalScreen.remove();
       
@@ -1278,13 +1367,7 @@ function startMeeting() {
   }
 
   initDummyStream();
-
-  if (myPeer && myPeer.id) {
-    myId = myPeer.id;
-    socket.emit('join-room', { roomId: currentRoomId, peerId: myId, username: myUsername });
-  } else {
-    initPeerJS();
-  }
+  initPeerJS();
 }
 
 function leaveRoom() {
@@ -1451,7 +1534,6 @@ async function loadRooms() {
         select.innerHTML += '<option value="' + r + '">' + r + '</option>';
       });
     }
-    // ✅ FIX: Update user assigned room select as well
     var userRoomSelect = document.getElementById('userAssignedRoomSelect');
     if (userRoomSelect) {
       userRoomSelect.innerHTML = '';
@@ -1604,7 +1686,6 @@ window.addEventListener('DOMContentLoaded', function() {
   connectSocket();
   loadRooms();
   
-  // ✅ FIX: Add enter key support for chat
   document.getElementById('chatInput').addEventListener('keypress', function(e) {
     if (e.key === 'Enter') {
       sendPrivateMessage();
