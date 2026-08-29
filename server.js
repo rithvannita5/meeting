@@ -8,22 +8,26 @@ const mongoose = require('mongoose');
 const app = express();
 const server = http.createServer(app);
 
-// PeerServer
+// Express Middleware
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Express PeerServer
 const peerServer = ExpressPeerServer(server, {
   debug: true,
   path: '/'
 });
 app.use('/peerjs', peerServer);
 
-// ========== FIX: Socket.IO with Polling Only ==========
-const io = new Server(server, { 
-  cors: { 
+// ========== Socket.IO Config ==========
+const io = new Server(server, {
+  cors: {
     origin: "*",
     methods: ["GET", "POST"],
     credentials: true
   },
-  transports: ['polling'], // ONLY POLLING - No WebSocket
-  allowUpgrades: false,    // Don't upgrade to WebSocket
+  transports: ['polling', 'websocket'],
+  allowUpgrades: true,
   pingTimeout: 60000,
   pingInterval: 25000,
   cookie: false,
@@ -31,24 +35,13 @@ const io = new Server(server, {
   maxHttpBufferSize: 1e8
 });
 
-// ========== Log connection ==========
 io.engine.on("connection_error", (err) => {
-  console.log('❌ Socket.IO connection error:', err);
+  console.log('❌ Socket.IO engine error:', err);
 });
 
-io.engine.on("connection", (socket) => {
-  console.log('✅ Socket.IO engine connection established');
-});
+// ========== Base Routes ==========
+app.get('/ping', (req, res) => res.send('pong'));
 
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
-// ========== PING Endpoint ==========
-app.get('/ping', (req, res) => {
-  res.send('pong');
-});
-
-// ========== PWA Routes ==========
 app.get('/manifest.json', (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'public, max-age=3600');
@@ -81,7 +74,7 @@ app.get('/favicon.ico', (req, res) => {
   res.send(svg);
 });
 
-// ========== MongoDB Connection ==========
+// ========== MongoDB Atlas Config ==========
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://rithvannita5_db_user:81Aokzd93Q9Vu3Xb@cluster0.oaj62a4.mongodb.net/meetingDB?retryWrites=true&w=majority&appName=Cluster0";
 
 const userSchema = new mongoose.Schema({
@@ -125,14 +118,14 @@ const roomUsers = {};
 const activeSockets = new Map();
 const otpStore = {};
 
-// ========== API Routes ==========
+// ========== REST APIs ==========
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
   try {
     const user = await User.findOne({ username, password });
     if (!user) return res.status(401).json({ success: false, message: 'ឈ្មោះ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ!' });
     if (user.isBlocked) return res.status(403).json({ success: false, message: 'គណនីត្រូវបានផ្អាក!' });
-    
+
     if (user.role !== 'admin' && user.role !== 'supervisor' && user.assignedRoom !== roomId) {
       return res.status(403).json({ success: false, message: `អ្នកគ្មានសិទ្ធិចូលបន្ទប់ ${roomId} ទេ!` });
     }
@@ -147,7 +140,7 @@ app.post('/api/login', async (req, res) => {
       otpStore[username] = otp;
       onlineSockets.forEach(sId => io.to(sId).emit('receive-otp', { otp, ip: req.ip }));
       io.emit('admin-alert', { username: username, count: onlineSockets.length + 1 });
-      return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។ សូមបញ្ចូលលេខកូដ 2FA ដែលបានផ្ញើទៅឧបករណ៍នោះ!' });
+      return res.json({ success: false, requires2FA: true, message: 'គណនីរបស់អ្នកកំពុង Online នៅឧបករណ៍ផ្សេង។ សូមបញ្ចូលលេខកូដ 2FA!' });
     }
 
     res.json({ success: true, user: { id: user._id, username: user.username, role: user.role, assignedRoom: user.assignedRoom } });
@@ -179,8 +172,7 @@ app.get('/api/users', async (req, res) => {
   try { 
     const users = await User.find({}, '-password'); 
     res.json({ users: users.map(u => ({ id: u._id, username: u.username, role: u.role, assignedRoom: u.assignedRoom, isBlocked: u.isBlocked })) }); 
-  } 
-  catch (err) { res.status(500).json({ message: 'Error fetching users' }); }
+  } catch (err) { res.status(500).json({ message: 'Error fetching users' }); }
 });
 
 app.post('/api/create-user', async (req, res) => {
@@ -189,8 +181,7 @@ app.post('/api/create-user', async (req, res) => {
   try {
     const exists = await User.findOne({ username });
     if (exists) return res.status(400).json({ message: 'ឈ្មោះ User នេះមានរួចហើយ!' });
-    const userRole = role || 'user';
-    await User.create({ username, password, assignedRoom, role: userRole });
+    await User.create({ username, password, assignedRoom, role: role || 'user' });
     res.json({ success: true, message: 'បង្កើត User ជោគជ័យ!' });
   } catch (err) { res.status(500).json({ message: 'Error creating user' }); }
 });
@@ -214,8 +205,7 @@ app.put('/api/users/:id/reset-password', async (req, res) => {
     }
     await User.findByIdAndUpdate(req.params.id, { password: req.body.newPassword }); 
     res.json({ success: true, message: 'ប្តូរ Password ជោគជ័យ!' }); 
-  } 
-  catch (err) { res.status(500).json({ message: 'Error updating password' }); }
+  } catch (err) { res.status(500).json({ message: 'Error updating password' }); }
 });
 
 app.put('/api/users/:id/toggle-block', async (req, res) => {
@@ -233,8 +223,7 @@ app.put('/api/users/:id/edit-room', async (req, res) => {
   try { 
     await User.findByIdAndUpdate(req.params.id, { assignedRoom: req.body.newRoom }); 
     res.json({ success: true, message: 'ប្តូរបន្ទប់រួចរាល់!' }); 
-  } 
-  catch (err) { res.status(500).json({ message: 'Error updating room' }); }
+  } catch (err) { res.status(500).json({ message: 'Error updating room' }); }
 });
 
 app.put('/api/users/:id/edit-role', async (req, res) => {
@@ -286,30 +275,19 @@ app.post('/api/remote-control/request', async (req, res) => {
   const { controllerId, targetId, roomId } = req.body;
   try {
     const existing = await RemoteControl.findOne({ controllerId, targetId, status: { $in: ['pending', 'approved', 'active'] } });
-    if (existing) {
-      return res.status(400).json({ message: 'សំណើរកំពុងដំណើរការរួចហើយ!' });
-    }
+    if (existing) return res.status(400).json({ message: 'សំណើរកំពុងដំណើរការរួចហើយ!' });
     const request = await RemoteControl.create({ controllerId, targetId, roomId, status: 'pending' });
-    io.to(roomId).emit('remote-control-request', {
-      requestId: request._id,
-      controllerId,
-      targetId,
-      roomId
-    });
+    io.to(roomId).emit('remote-control-request', { requestId: request._id, controllerId, targetId, roomId });
     res.json({ success: true, requestId: request._id });
   } catch (err) { res.status(500).json({ message: 'Error requesting remote control' }); }
 });
 
 app.post('/api/remote-control/approve', async (req, res) => {
-  const { requestId, targetId } = req.body;
+  const { requestId } = req.body;
   try {
     const request = await RemoteControl.findByIdAndUpdate(requestId, { status: 'approved' }, { new: true });
     if (!request) return res.status(404).json({ message: 'សំណើរមិនមានទេ!' });
-    io.to(request.roomId).emit('remote-control-approved', {
-      requestId: request._id,
-      controllerId: request.controllerId,
-      targetId: request.targetId
-    });
+    io.to(request.roomId).emit('remote-control-approved', { requestId: request._id, controllerId: request.controllerId, targetId: request.targetId });
     res.json({ success: true });
   } catch (err) { res.status(500).json({ message: 'Error approving remote control' }); }
 });
@@ -319,11 +297,7 @@ app.post('/api/remote-control/reject', async (req, res) => {
   try {
     const request = await RemoteControl.findByIdAndUpdate(requestId, { status: 'rejected' }, { new: true });
     if (!request) return res.status(404).json({ message: 'សំណើរមិនមានទេ!' });
-    io.to(request.roomId).emit('remote-control-rejected', {
-      requestId: request._id,
-      controllerId: request.controllerId,
-      targetId: request.targetId
-    });
+    io.to(request.roomId).emit('remote-control-rejected', { requestId: request._id, controllerId: request.controllerId, targetId: request.targetId });
     res.json({ success: true });
   } catch (err) { res.status(500).json({ message: 'Error rejecting remote control' }); }
 });
@@ -337,26 +311,21 @@ app.post('/api/remote-control/end', async (req, res) => {
       { new: true }
     );
     if (request) {
-      io.to(request.roomId).emit('remote-control-ended', {
-        controllerId,
-        targetId
-      });
+      io.to(request.roomId).emit('remote-control-ended', { controllerId, targetId });
     }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ message: 'Error ending remote control' }); }
 });
 
-// ========== Socket.io ==========
+// ========== Socket.io Logic ==========
 io.on('connection', (socket) => {
-  console.log('🔌 New socket connected:', socket.id);
-  
+  console.log('🔌 Socket connected:', socket.id);
+
   socket.on('register-admin', () => {
     socket.join('admin-room');
-    console.log('👑 Admin registered:', socket.id);
   });
 
   socket.on('join-room', (roomId, peerId, username) => {
-    console.log(`📡 ${username} joining room: ${roomId}`);
     socket.join(roomId);
     socket.data.roomId = roomId;
     socket.data.peerId = peerId;
@@ -376,7 +345,6 @@ io.on('connection', (socket) => {
     io.to('admin-room').emit('rooms-update');
 
     socket.on('disconnect', () => {
-      console.log('🔌 Socket disconnected:', socket.id);
       activeSockets.delete(socket.id);
       if (roomUsers[roomId]) {
         roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
@@ -396,7 +364,7 @@ io.on('connection', (socket) => {
         socket.to(targetUser.socketId).emit('receive-private-message', {
           fromPeerId: socket.data.peerId,
           fromUsername: socket.data.username,
-          message: message
+          message
         });
       }
     }
@@ -406,9 +374,7 @@ io.on('connection', (socket) => {
     const roomId = socket.data.roomId;
     if (roomUsers[roomId]) {
       const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
-      if (targetUser) {
-        socket.to(targetUser.socketId).emit('remote-mouse-move', { x, y });
-      }
+      if (targetUser) socket.to(targetUser.socketId).emit('remote-mouse-move', { x, y });
     }
   });
 
@@ -416,9 +382,7 @@ io.on('connection', (socket) => {
     const roomId = socket.data.roomId;
     if (roomUsers[roomId]) {
       const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
-      if (targetUser) {
-        socket.to(targetUser.socketId).emit('remote-mouse-click', { x, y });
-      }
+      if (targetUser) socket.to(targetUser.socketId).emit('remote-mouse-click', { x, y });
     }
   });
 
@@ -426,28 +390,17 @@ io.on('connection', (socket) => {
     const roomId = socket.data.roomId;
     if (roomUsers[roomId]) {
       const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
-      if (targetUser) {
-        socket.to(targetUser.socketId).emit('remote-keyboard', { key });
-      }
+      if (targetUser) socket.to(targetUser.socketId).emit('remote-keyboard', { key });
     }
   });
 });
 
-// ========== Keep-alive for Render ==========
+// Keep-alive
 setInterval(() => {
   const https = require('https');
   const hostname = process.env.RENDER_EXTERNAL_HOSTNAME || 'meeting-mu6x.onrender.com';
-  https.get(`https://${hostname}/ping`, (res) => {
-    console.log('💓 Keep-alive ping sent');
-  }).on('error', (err) => {
-    console.log('❌ Keep-alive ping failed:', err.message);
-  });
+  https.get(`https://${hostname}/ping`, () => {}).on('error', () => {});
 }, 60000);
 
-// ========== Start Server ==========
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-
-io.engine.on("connection_error", (err) => {
-  console.log('❌ Socket.IO connection error:', err);
-});
