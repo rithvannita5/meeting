@@ -159,10 +159,17 @@ function connectSocket() {
       updateUserCount();
       updateChatUserList();
       playNotificationSound('join');
-      
-      setTimeout(function() {
-        connectToUser(peerId);
-      }, 500);
+
+      // ✅ FIX: don't also call the newcomer here. The newcomer already
+      // calls every existing user from the 'room-joined' handler, and a
+      // PeerJS call is full-duplex (call.answer(localStream) sends media
+      // back on the SAME connection) — so a single call covers both
+      // directions. Calling from both sides created two separate
+      // RTCPeerConnections per pair, which doubled ICE/TURN load and
+      // caused the srcObject/play() race ("play() request was interrupted
+      // by a new load request") visible in the console, plus extra
+      // 'disconnected' ICE flapping. We just wait for their incoming call
+      // (handled in myPeer.on('call')) instead.
 
       if (isScreenSharing && screenStream && myPeer) {
         setTimeout(function() {
@@ -641,14 +648,68 @@ function showChatNotification(username, message, peerId) {
 // ✅ FIX: helper to log ICE connection state per-call, so black-screen /
 // cross-network failures show up clearly in the browser console instead of
 // failing silently.
+//
+// NOTE on 'disconnected' vs 'failed': WebRTC's ICE layer treats a momentary
+// network hiccup, keepalive miss, or Wi-Fi/4G handoff as 'disconnected' —
+// this is normal and the browser retries connectivity checks automatically
+// for ~20-30s before giving up. Only 'failed' means the candidates genuinely
+// could not find a path (almost always a TURN relay problem) and needs a
+// user-facing warning + an ICE restart attempt.
 function attachIceDiagnostics(call, peerId, label) {
   if (!call || !call.peerConnection) return;
-  call.peerConnection.oniceconnectionstatechange = function() {
-    const state = call.peerConnection.iceConnectionState;
+  const pc = call.peerConnection;
+  let disconnectedTimer = null;
+
+  // Log every local candidate as it's gathered — this tells us directly
+  // whether a TURN "relay" candidate was ever produced. If you only ever
+  // see "host" / "srflx" candidates and no "relay" one, the TURN servers
+  // in ICE_SERVERS are not reachable/working and that's the root cause.
+  pc.onicecandidate = function(evt) {
+    if (evt.candidate) {
+      const c = evt.candidate;
+      console.log(`🧊 [${label}] local candidate (${peerId}):`, c.type, c.protocol, c.address || c.candidate);
+    } else {
+      console.log(`🧊 [${label}] candidate gathering complete for ${peerId}`);
+    }
+  };
+
+  pc.oniceconnectionstatechange = function() {
+    const state = pc.iceConnectionState;
     console.log(`🧊 [${label}] ICE state with ${peerId}:`, state);
+
+    if (state === 'connected' || state === 'completed') {
+      if (disconnectedTimer) { clearTimeout(disconnectedTimer); disconnectedTimer = null; }
+      // Log which candidate pair actually won, so we can see host/srflx/relay.
+      pc.getStats(null).then(stats => {
+        stats.forEach(report => {
+          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+            const local = stats.get(report.localCandidateId);
+            const remote = stats.get(report.remoteCandidateId);
+            if (local) console.log(`✅ [${label}] active LOCAL candidate (${peerId}):`, local.candidateType, local.protocol);
+            if (remote) console.log(`✅ [${label}] active REMOTE candidate (${peerId}):`, remote.candidateType, remote.protocol);
+          }
+        });
+      }).catch(() => {});
+    }
+
+    if (state === 'disconnected') {
+      // Give it ~15s to self-heal before treating it as a real failure.
+      if (disconnectedTimer) clearTimeout(disconnectedTimer);
+      disconnectedTimer = setTimeout(function() {
+        if (pc.iceConnectionState === 'disconnected') {
+          console.log(`⚠️ [${label}] still disconnected after 15s with ${peerId}, attempting ICE restart`);
+          if (typeof pc.restartIce === 'function') pc.restartIce();
+        }
+      }, 15000);
+    }
+
     if (state === 'failed') {
       console.log(`❌ [${label}] ICE FAILED with ${peerId} — TURN relay ប្រហែលមិនដំណើរការ ឬបណ្តាញរឹតបន្តឹងពេក`);
       showToast('⚠️ ការតភ្ជាប់ជាមួយអ្នកប្រើម្នាក់មានបញ្ហា (Network)', 'warning');
+      if (typeof pc.restartIce === 'function') {
+        console.log(`🔄 [${label}] attempting ICE restart with ${peerId}`);
+        pc.restartIce();
+      }
     }
   };
 }
@@ -831,6 +892,10 @@ function addRemoteVideo(peerId, username) {
 function attachRemoteStream(peerId, stream) {
   const videoElem = document.getElementById('stream-' + peerId);
   if (videoElem) {
+    // ✅ FIX: guard against re-assigning the same stream (e.g. the
+    // 'stream' event firing more than once for one call), which was
+    // interrupting the previous play() request with an AbortError.
+    if (videoElem.srcObject === stream) return;
     videoElem.srcObject = stream;
     // ✅ FIX: explicitly call play() and catch autoplay-block errors instead
     // of failing silently (would otherwise show a frozen/black frame).
