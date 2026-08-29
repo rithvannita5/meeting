@@ -50,12 +50,17 @@ let isBeingControlled = false;
 let remotePointer = null;
 
 // ============================================================
-// FALLBACK ICE SERVERS
+// TURN SERVERS - FIXED (ប្រើ OpenRelay TURN)
 // ============================================================
-const ICE_SERVERS_FALLBACK = [
+const ICE_SERVERS = [
+  // STUN Servers
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  
+  // TURN Server 1: OpenRelay (ឥតគិតថ្លៃ)
   {
     urls: 'turn:openrelay.metered.ca:80',
     username: 'openrelayproject',
@@ -65,49 +70,55 @@ const ICE_SERVERS_FALLBACK = [
     urls: 'turn:openrelay.metered.ca:443',
     username: 'openrelayproject',
     credential: 'openrelayproject'
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  
+  // TURN Server 2: Metered.ca (បន្ថែមជាជម្រើសទី 2)
+  {
+    urls: 'turn:global.relay.metered.ca:80',
+    username: 'f8f65afd73bf8de153cc',
+    credential: 'xWJ/zYt5iBaD8zY7'
+  },
+  {
+    urls: 'turn:global.relay.metered.ca:443',
+    username: 'f8f65afd73bf8de153cc',
+    credential: 'xWJ/zYt5iBaD8zY7'
   }
 ];
 
 // ============================================================
-// SOCKET CONNECTION FUNCTION - FIXED
+// SOCKET CONNECTION FUNCTION
 // ============================================================
 function connectSocket() {
   socket = io({
     transports: ['polling'],
     upgrade: false,
     reconnection: true,
-    reconnectionAttempts: 5,        // ✅ FIX: កាត់បន្ថយចំនួនព្យាយាម
-    reconnectionDelay: 2000,         // ✅ FIX: បង្កើន delay
+    reconnectionAttempts: 10,
+    reconnectionDelay: 2000,
     reconnectionDelayMax: 10000,
-    timeout: 30000,                  // ✅ FIX: កាត់បន្ថយ timeout
+    timeout: 30000,
     forceNew: true,
     path: '/socket.io'
   });
 
-  // ✅ FIX: បន្ថែម reconnect attempt limit
-  let reconnectAttempts = 0;
-  const MAX_RECONNECT_ATTEMPTS = 5;
-
   socket.on('connect_error', function(error) {
     console.log('❌ Socket.IO connection error:', error);
-    reconnectAttempts++;
+    connectionAttempts++;
     
-    if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-      console.log('❌ Max reconnect attempts reached, reloading page...');
-      showToast('⚠️ មិនអាចភ្ជាប់ Server បានទេ! កំពុងផ្ទុកឡើងវិញ...', 'error');
-      setTimeout(function() {
-        location.reload();
-      }, 3000);
-      return;
+    if (connectionAttempts > 5) {
+      showToast('⚠️ កំពុងព្យាយាមភ្ជាប់ Server ឡើងវិញ...', 'warning');
     }
-    
-    showToast(`⚠️ កំពុងព្យាយាមភ្ជាប់ Server (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`, 'warning');
   });
 
   socket.on('connect', function() {
     console.log('✅ Socket.IO connected successfully!');
     socketConnected = true;
-    reconnectAttempts = 0;
+    connectionAttempts = 0;
     showToast('✅ ភ្ជាប់ Server បានជោគជ័យ!', 'success');
     
     if (myId && currentRoomId && myUsername) {
@@ -129,6 +140,20 @@ function connectSocket() {
           socket.connect();
         }
       }, 3000);
+    }
+  });
+
+  socket.on('reconnect', function(attemptNumber) {
+    console.log('🔄 Socket.IO reconnected after', attemptNumber, 'attempts');
+    socketConnected = true;
+    showToast('✅ Reconnected to server!', 'success');
+    
+    if (myId && currentRoomId && myUsername) {
+      socket.emit('join-room', {
+        roomId: currentRoomId,
+        peerId: myId,
+        username: myUsername
+      });
     }
   });
 
@@ -657,17 +682,16 @@ function attachIceDiagnostics(call, peerId, label) {
 }
 
 // ============================================================
-// INIT PEERJS WITH CLOUDFLARE TURN - FIXED
+// INIT PEERJS - FIXED
 // ============================================================
-async function initPeerJS() {
+function initPeerJS() {
   if (peerInitialized) {
     console.log('⚠️ PeerJS already initialized');
     return;
   }
 
-  // ✅ FIX: ប្រើ fallback ភ្លាមៗ មិនរង់ចាំ Socket
   try {
-    console.log('🔄 Initializing PeerJS with fallback TURN servers...');
+    console.log('🔄 Initializing PeerJS with TURN servers...');
     
     const isSecure = window.location.protocol === 'https:';
     const hostname = window.location.hostname;
@@ -680,61 +704,13 @@ async function initPeerJS() {
       secure: isSecure,
       debug: 2,
       config: {
-        iceServers: ICE_SERVERS_FALLBACK,
+        iceServers: ICE_SERVERS,
         iceTransportPolicy: 'all'
       }
     });
 
     peerInitialized = true;
 
-    myPeer.on('open', function(id) {
-      myId = id;
-      console.log('✅ PeerJS Connected with ID:', myId);
-      
-      if (socket && socketConnected && currentRoomId && myUsername) {
-        socket.emit('join-room', {
-          roomId: currentRoomId,
-          peerId: myId,
-          username: myUsername
-        });
-      }
-    });
-
-    // ✅ FIX: ការពារ PeerJS error មិនឲ្យបែកកម្មវិធី
-    myPeer.on('error', function(err) {
-      console.error('❌ PeerJS Error:', err);
-      // មិនឲ្យ showToast ច្រើនពេក
-    });
-
-    myPeer.on('disconnected', function() {
-      console.log('🔌 PeerJS disconnected');
-      if (myPeer && !myPeer.destroyed) {
-        setTimeout(function() {
-          if (myPeer && !myPeer.destroyed) {
-            myPeer.reconnect();
-          }
-        }, 3000);
-      }
-    });
-
-    // ✅ FIX: បន្ថែម call handler
-    myPeer.on('call', function(call) {
-      console.log('📞 Incoming call from:', call.peer);
-      if (localStream) {
-        call.answer(localStream);
-      } else {
-        initDummyStream();
-        call.answer(localStream);
-      }
-      // ... rest of call handling
-    });
-
-  } catch (error) {
-    console.error('❌ Failed to initialize PeerJS:', error);
-    showToast('❌ មិនអាចភ្ជាប់ Peer Server បានទេ!', 'error');
-  }
-}
-    // ===== PeerJS Events =====
     myPeer.on('open', function(id) {
       myId = id;
       console.log('✅ PeerJS Connected with ID:', myId);
@@ -788,102 +764,22 @@ async function initPeerJS() {
 
     myPeer.on('error', function(err) {
       console.error('❌ PeerJS Error:', err);
-      if (err && (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error')) {
-        showToast('⚠️ Signaling server connection issue, retrying...', 'warning');
+    });
+
+    myPeer.on('disconnected', function() {
+      console.log('🔌 PeerJS disconnected');
+      if (myPeer && !myPeer.destroyed) {
         setTimeout(function() {
-          if (!myPeer || myPeer.destroyed) {
-            peerInitialized = false;
-            initPeerJS();
+          if (myPeer && !myPeer.destroyed) {
+            myPeer.reconnect();
           }
         }, 3000);
       }
     });
 
-    myPeer.on('disconnected', function() {
-      console.log('🔌 PeerJS disconnected, reconnecting...');
-      if (myPeer && !myPeer.destroyed) {
-        try { 
-          myPeer.reconnect(); 
-        } catch (e) { 
-          console.log('Reconnect failed:', e);
-          setTimeout(function() {
-            if (myPeer) myPeer.destroy();
-            peerInitialized = false;
-            initPeerJS();
-          }, 3000);
-        }
-      }
-    });
-
   } catch (error) {
-    console.error('❌ Failed to initialize PeerJS with Cloudflare TURN:', error);
-    showToast('⚠️ Using fallback TURN servers', 'warning');
-    
-    // ✅ FIX: Fallback
-    try {
-      const isSecure = window.location.protocol === 'https:';
-      myPeer = new Peer(undefined, {
-        host: window.location.hostname,
-        port: isSecure ? 443 : (window.location.port || 80),
-        path: '/peerjs',
-        secure: isSecure,
-        debug: 2,
-        config: {
-          iceServers: ICE_SERVERS_FALLBACK
-        }
-      });
-      
-      peerInitialized = true;
-      
-      myPeer.on('open', function(id) {
-        myId = id;
-        console.log('✅ PeerJS (fallback) Connected with ID:', myId);
-        if (socket && socketConnected && currentRoomId && myUsername) {
-          socket.emit('join-room', {
-            roomId: currentRoomId,
-            peerId: myId,
-            username: myUsername
-          });
-        }
-      });
-      
-      myPeer.on('call', function(call) {
-        if (localStream) {
-          call.answer(localStream);
-        } else {
-          initDummyStream();
-          call.answer(localStream);
-        }
-        const type = (call.metadata && call.metadata.type) || 'video';
-        call.on('stream', function(remoteStream) {
-          if (type === 'screen') {
-            addRemoteScreenVideo(call.peer, remoteStream, (call.metadata && call.metadata.username) || 'User');
-          } else {
-            attachRemoteStream(call.peer, remoteStream);
-          }
-        });
-        call.on('close', function() {
-          removeRemoteVideo(call.peer);
-          removeRemoteScreenVideo(call.peer);
-          delete peerCalls[call.peer];
-        });
-        peerCalls[call.peer] = call;
-      });
-      
-      myPeer.on('error', function(err) {
-        console.error('❌ PeerJS (fallback) Error:', err);
-      });
-      
-      myPeer.on('disconnected', function() {
-        if (myPeer && !myPeer.destroyed) {
-          try { myPeer.reconnect(); } catch (e) {}
-        }
-      });
-      
-    } catch (fallbackError) {
-      console.error('❌ Fallback PeerJS also failed:', fallbackError);
-      showToast('❌ Could not establish connection', 'error');
-    }
+    console.error('❌ Failed to initialize PeerJS:', error);
+    showToast('❌ មិនអាចភ្ជាប់ Peer Server បានទេ!', 'error');
   }
 }
 
@@ -1425,25 +1321,7 @@ function startMeeting() {
   }
 
   initDummyStream();
-  
-  // ✅ FIX: រង់ចាំ Socket ភ្ជាប់មុនពេលដំឡើង Peer
-  if (!socketConnected) {
-    showToast('⏳ កំពុងភ្ជាប់ Server...', 'info');
-    var waitForSocket = setInterval(function() {
-      if (socketConnected) {
-        clearInterval(waitForSocket);
-        initPeerJS();
-      }
-    }, 500);
-    setTimeout(function() {
-      clearInterval(waitForSocket);
-      if (!peerInitialized) {
-        initPeerJS();
-      }
-    }, 10000);
-  } else {
-    initPeerJS();
-  }
+  initPeerJS();
 }
 
 function leaveRoom() {
