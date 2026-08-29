@@ -1228,7 +1228,7 @@ function updateScreenShareButtonUI() {
     btn.classList.add('sharing-active');
   } else {
     btn.innerHTML = btn.dataset.origHtml;
-    btn.style.background = btn.dataset.origBg;
+    btn.style.background = '#F59E0B';
     btn.classList.remove('sharing-active');
   }
 }
