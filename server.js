@@ -27,7 +27,7 @@ const io = new Server(server, {
     credentials: true
   },
   transports: ['polling', 'websocket'],
-  allowUpgrades: true,
+  allowUpgrades: false, // បិទការ Upgrade ដើម្បីកាត់បន្ថយ Error លើ Render Proxy
   pingTimeout: 60000,
   pingInterval: 25000,
   cookie: false,
@@ -118,7 +118,7 @@ const roomUsers = {};
 const activeSockets = new Map();
 const otpStore = {};
 
-// ========== REST APIs (AUTHENTICATION & USER) ==========
+// ========== REST APIs ==========
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
   try {
@@ -175,7 +175,6 @@ app.get('/api/users', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error fetching users' }); }
 });
 
-// 支持ទាំង /api/create-user និង /api/users/create
 const handleCreateUser = async (req, res) => {
   const { username, password, assignedRoom, role } = req.body;
   if (!username || !password) return res.status(400).json({ message: 'សូមបំពេញព័ត៌មានឱ្យគ្រប់!' });
@@ -246,7 +245,6 @@ app.put('/api/users/:id/edit-role', async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'Error updating role' }); }
 });
 
-// ========== REST APIs (ROOMS) ==========
 const handleCreateRoom = async (req, res) => {
   const roomId = req.body.roomId || req.body.roomName;
   if (!roomId) return res.status(400).json({ message: 'សូមបញ្ចូលឈ្មោះបន្ទប់!' });
@@ -333,7 +331,6 @@ io.on('connection', (socket) => {
     socket.join('admin-room');
   });
 
-  // ទទួលយក payload ជា Object ឬ Multiple Args ដើម្បើសុវត្ថិភាព
   socket.on('join-room', (data, peerIdArg, usernameArg) => {
     let roomId, peerId, username;
 
@@ -362,10 +359,9 @@ io.on('connection', (socket) => {
     const existingUsers = [...roomUsers[roomId]];
     roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
-    // ផ្ញើ 'room-joined' ត្រឡប់ទៅ Frontend
     socket.emit('room-joined', { roomId, existingUsers });
+    socket.emit('existing-users', existingUsers);
     
-    // ប្រកាសប្រាប់អ្នកផ្សេងក្នុងបន្ទប់
     socket.to(roomId).emit('user-joined', { peerId, username });
     io.to(roomId).emit('play-sound', 'join');
     io.emit('rooms-update');
@@ -375,6 +371,7 @@ io.on('connection', (socket) => {
       if (roomUsers[roomId]) {
         roomUsers[roomId] = roomUsers[roomId].filter(u => u.socketId !== socket.id);
         socket.to(roomId).emit('user-left', { peerId: socket.data.peerId });
+        socket.to(roomId).emit('user-left', socket.data.peerId);
         io.to(roomId).emit('play-sound', 'leave');
         if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
       }
@@ -396,7 +393,6 @@ io.on('connection', (socket) => {
     io.emit('rooms-update');
   });
 
-  // Private Messages - ទទួលយក send-private-message និង private-message
   const handlePrivateMessage = ({ targetPeerId, toPeerId, message, fromUsername }) => {
     const destPeerId = targetPeerId || toPeerId;
     const roomId = socket.data.roomId;
@@ -416,7 +412,6 @@ io.on('connection', (socket) => {
   socket.on('send-private-message', handlePrivateMessage);
   socket.on('private-message', handlePrivateMessage);
 
-  // Remote Control Pass-through Events
   socket.on('remote-mouse-move', ({ targetId, x, y }) => {
     const roomId = socket.data.roomId;
     if (roomId && roomUsers[roomId]) {
