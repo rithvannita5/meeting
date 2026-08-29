@@ -760,10 +760,37 @@ async function loadUsersTable() {
 
 function adminJoinRoom(roomId) {
   currentRoomId = roomId;
-  document.getElementById('admin-dashboard').classList.add('hidden');
-  startMeeting();
-}
 
+  // ១. លាក់ Admin Dashboard
+  var adminDash = document.getElementById('admin-dashboard');
+  if (adminDash) adminDash.classList.add('hidden');
+
+  // ២. បើកបង្ហាញ Meeting Container
+  var meetingContainer = document.getElementById('meeting-container');
+  if (meetingContainer) meetingContainer.classList.remove('hidden');
+
+  // ៣. បង្ហាញឈ្មោះបន្ទប់នៅលើ Header
+  var displayRoom = document.getElementById('displayRoomId');
+  if (displayRoom) displayRoom.textContent = currentRoomId;
+
+  // ៤. ដំណើរការ Dummy Stream និង PeerJS ដើម្បីភ្ជាប់ចូលបន្ទប់
+  initDummyStream();
+
+  if (myPeer && myPeer.id) {
+    // ប្រសិនបើ Peer ភ្ជាប់រួចហើយ ផ្ញើសារ Join Room ទៅ Socket ភ្លាមៗ
+    myId = myPeer.id;
+    socket.emit('join-room', {
+      roomId: currentRoomId,
+      peerId: myId,
+      username: myUsername
+    });
+  } else {
+    // ប្រសិនបើមិនទាន់ភ្ជាប់ PeerJS ទេ ឱ្យវាតភ្ជាប់ឡើងវិញ
+    initPeerJS();
+  }
+
+  showToast('🚪 បានចូលរួមបន្ទប់៖ ' + currentRoomId, 'success');
+}
 // ============================================================
 // ADMIN CRUD OPERATIONS
 // ============================================================
