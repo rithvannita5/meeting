@@ -31,6 +31,18 @@ const screenGrid = document.getElementById('screenGrid');
 const videoGrid = document.getElementById('videoGrid');
 
 // ============================================================
+// CHAT VARIABLES
+// ============================================================
+let unreadChats = {};
+let isChatOpen = false;
+let chatTargetPeerId = null;
+let chatMessages = {};
+let chatMessageInput = null;
+let chatSendBtn = null;
+let chatUserList = null;
+let chatMessagesContainer = null;
+
+// ============================================================
 // REMOTE CONTROL VARIABLES
 // ============================================================
 let isRemoteControlActive = false;
@@ -38,13 +50,6 @@ let remoteControlTarget = null;
 let remoteControlRequestId = null;
 let isBeingControlled = false;
 let remotePointer = null;
-
-// ============================================================
-// CHAT NOTIFICATION VARIABLES
-// ============================================================
-let unreadChats = {};
-let isChatOpen = false;
-let autoReplyEnabled = true;
 
 // ============================================================
 // SOCKET CONNECTION FUNCTION
@@ -228,15 +233,26 @@ function connectSocket() {
   });
 
   // ============================================================
-  // PRIVATE CHAT WITH NOTIFICATIONS
+  // CHAT MESSAGES - FIXED
   // ============================================================
   socket.on('receive-private-message', function(data) {
-    var chatMsgs = document.getElementById('chat-messages');
-    if (chatMsgs) {
-      chatMsgs.innerHTML += '<div class="msg-item"><b>From 👤 ' + data.fromUsername + ':</b><br>' + data.message + '</div>';
-      chatMsgs.scrollTop = chatMsgs.scrollHeight;
+    // រក្សាទុកសារក្នុង chatMessages
+    if (!chatMessages[data.fromPeerId]) {
+      chatMessages[data.fromPeerId] = [];
     }
-    
+    chatMessages[data.fromPeerId].push({
+      from: data.fromPeerId,
+      fromUsername: data.fromUsername,
+      message: data.message,
+      time: new Date().toLocaleTimeString()
+    });
+
+    // បង្ហាញក្នុង Chat បើកំពុងសន្ទនាជាមួយអ្នកផ្ញើ
+    if (chatTargetPeerId === data.fromPeerId && isChatOpen) {
+      renderChatMessages();
+    }
+
+    // បង្កើនចំនួន unread
     if (!unreadChats[data.fromPeerId]) {
       unreadChats[data.fromPeerId] = { count: 0, messages: [], username: data.fromUsername };
     }
@@ -245,22 +261,12 @@ function connectSocket() {
     unreadChats[data.fromPeerId].username = data.fromUsername;
     
     updateChatBadge();
-    
-    if (!isChatOpen) {
-      showChatNotification(data.fromUsername, data.message, data.fromPeerId);
-    }
-    
     updateChatUserList();
+    playNotificationSound('message');
     
-    if (autoReplyEnabled && !isChatOpen) {
-      setTimeout(function() {
-        if (!isChatOpen && unreadChats[data.fromPeerId] && unreadChats[data.fromPeerId].count > 0) {
-          toggleChat();
-          var select = document.getElementById('chatRecipientSelect');
-          if (select) select.value = data.fromPeerId;
-          showToast('💬 ' + data.fromUsername + ' បានផ្ញើសារមកអ្នក', 'info');
-        }
-      }, 3000);
+    // បង្ហាញ Notification
+    if (!isChatOpen || chatTargetPeerId !== data.fromPeerId) {
+      showChatNotification(data.fromUsername, data.message, data.fromPeerId);
     }
   });
 
@@ -309,7 +315,7 @@ function connectSocket() {
   });
 
   // ============================================================
-  // LEAVE ROOM EVENT - FIXED
+  // LEAVE ROOM RESPONSE
   // ============================================================
   socket.on('leave-room-response', function(data) {
     console.log('✅ Leave room response:', data);
@@ -367,13 +373,242 @@ function playNotificationSound(type) {
 }
 
 // ============================================================
-// CHAT NOTIFICATION FUNCTIONS
+// CHAT FUNCTIONS - FIXED & IMPROVED
+// ============================================================
+
+// បើក/បិទ Chat Panel
+function toggleChat() {
+  const chatPanel = document.getElementById('chat-panel');
+  if (!chatPanel) return;
+  
+  isChatOpen = !isChatOpen;
+  
+  if (isChatOpen) {
+    chatPanel.classList.remove('hidden');
+    chatPanel.style.display = 'flex';
+    // បើក Chat User List ដំបូង
+    showChatUserList();
+  } else {
+    chatPanel.classList.add('hidden');
+    chatPanel.style.display = 'none';
+    chatTargetPeerId = null;
+  }
+}
+
+// បង្ហាញ User List ក្នុង Chat
+function showChatUserList() {
+  const userListContainer = document.getElementById('chat-user-list');
+  const messageContainer = document.getElementById('chat-messages-container');
+  
+  if (userListContainer) userListContainer.style.display = 'block';
+  if (messageContainer) messageContainer.style.display = 'none';
+}
+
+// បង្ហាញ Message Area
+function showChatMessages(peerId) {
+  chatTargetPeerId = peerId;
+  
+  const userListContainer = document.getElementById('chat-user-list');
+  const messageContainer = document.getElementById('chat-messages-container');
+  const chatTitle = document.getElementById('chat-title');
+  
+  if (userListContainer) userListContainer.style.display = 'none';
+  if (messageContainer) messageContainer.style.display = 'flex';
+  
+  // កំណត់ចំណងជើង Chat
+  if (chatTitle) {
+    const username = userNamesMap[peerId] || 'មិត្តភក្តិ';
+    chatTitle.textContent = '👤 ' + username;
+  }
+  
+  // កំណត់ Chat Target
+  const chatInput = document.getElementById('chatInput');
+  if (chatInput) {
+    chatInput.dataset.target = peerId;
+    chatInput.focus();
+  }
+  
+  // សម្អាត Unread សម្រាប់អ្នកនេះ
+  if (unreadChats[peerId]) {
+    unreadChats[peerId].count = 0;
+    updateChatBadge();
+    updateChatUserList();
+  }
+  
+  renderChatMessages();
+}
+
+// បង្ហាញសារទាំងអស់
+function renderChatMessages() {
+  const messagesContainer = document.getElementById('chat-messages');
+  if (!messagesContainer || !chatTargetPeerId) return;
+  
+  messagesContainer.innerHTML = '';
+  
+  const messages = chatMessages[chatTargetPeerId] || [];
+  
+  if (messages.length === 0) {
+    messagesContainer.innerHTML = '<div class="chat-empty">គ្មានសារទេ</div>';
+    return;
+  }
+  
+  messages.forEach(function(msg) {
+    const isMyMessage = msg.from === myId;
+    const div = document.createElement('div');
+    div.className = 'chat-msg ' + (isMyMessage ? 'my-msg' : 'other-msg');
+    div.innerHTML = `
+      <div class="msg-bubble">
+        <div class="msg-text">${msg.message}</div>
+        <div class="msg-time">${msg.time || new Date().toLocaleTimeString()}</div>
+      </div>
+    `;
+    messagesContainer.appendChild(div);
+  });
+  
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+// បញ្ជូនសារ
+function sendPrivateMessage() {
+  const chatInput = document.getElementById('chatInput');
+  if (!chatInput) return;
+  
+  const targetPeerId = chatInput.dataset.target || chatTargetPeerId;
+  const message = chatInput.value.trim();
+  
+  if (!targetPeerId) {
+    showToast('សូមជ្រើសរើសអ្នកទទួលសារ!', 'warning');
+    showChatUserList();
+    return;
+  }
+  if (!message) return;
+
+  // ផ្ញើសារ
+  socket.emit('send-private-message', {
+    targetPeerId: targetPeerId,
+    message: message,
+    fromUsername: myUsername
+  });
+
+  // រក្សាទុកក្នុង local
+  if (!chatMessages[targetPeerId]) {
+    chatMessages[targetPeerId] = [];
+  }
+  chatMessages[targetPeerId].push({
+    from: myId,
+    fromUsername: myUsername,
+    message: message,
+    time: new Date().toLocaleTimeString()
+  });
+
+  chatInput.value = '';
+  renderChatMessages();
+}
+
+// ធ្វើបច្ចុប្បន្នភាព User List
+function updateChatUserList() {
+  const userList = document.getElementById('chat-user-list');
+  if (!userList) return;
+  
+  // រក្សាទុក scroll position
+  const scrollPos = userList.scrollTop;
+  
+  userList.innerHTML = '';
+  
+  // តម្រៀបអ្នកប្រើតាមឈ្មោះ
+  const sortedUsers = Object.keys(userNamesMap)
+    .filter(pid => pid !== myId)
+    .sort((a, b) => userNamesMap[a].localeCompare(userNamesMap[b]));
+  
+  if (sortedUsers.length === 0) {
+    userList.innerHTML = '<div class="chat-empty">គ្មានអ្នកប្រើក្នុងបន្ទប់ទេ</div>';
+    return;
+  }
+  
+  sortedUsers.forEach(function(peerId) {
+    const username = userNamesMap[peerId] || 'Unknown';
+    const unread = unreadChats[peerId] ? unreadChats[peerId].count : 0;
+    const lastMsg = unreadChats[peerId] && unreadChats[peerId].messages.length > 0 
+      ? unreadChats[peerId].messages[unreadChats[peerId].messages.length - 1] 
+      : '';
+    
+    const div = document.createElement('div');
+    div.className = 'chat-user-item' + (chatTargetPeerId === peerId ? ' active' : '');
+    div.dataset.peer = peerId;
+    
+    div.innerHTML = `
+      <div class="user-avatar">${username.charAt(0).toUpperCase()}</div>
+      <div class="user-info">
+        <div class="user-name">${username}</div>
+        <div class="user-last-msg">${lastMsg ? lastMsg.substring(0, 30) + (lastMsg.length > 30 ? '...' : '') : 'ចាប់ផ្ដើមសន្ទនា'}</div>
+      </div>
+      ${unread > 0 ? `<div class="unread-badge">${unread}</div>` : ''}
+    `;
+    
+    div.onclick = function() {
+      showChatMessages(peerId);
+    };
+    
+    userList.appendChild(div);
+  });
+  
+  userList.scrollTop = scrollPos;
+}
+
+// បង្ហាញ Notification Chat
+function showChatNotification(username, message, peerId) {
+  // លុប Notification ចាស់
+  document.querySelectorAll('.chat-notification').forEach(function(el) {
+    if (el.dataset.peer === peerId) {
+      el.remove();
+    }
+  });
+  
+  const notif = document.createElement('div');
+  notif.className = 'chat-notification';
+  notif.dataset.peer = peerId;
+  notif.innerHTML = `
+    <button class="close-notif" onclick="event.stopPropagation(); this.parentElement.remove()">✕</button>
+    <div class="sender">👤 ${username}</div>
+    <div class="msg-preview">${message.length > 50 ? message.substring(0, 50) + '...' : message}</div>
+    <div class="time">${new Date().toLocaleTimeString()}</div>
+  `;
+  
+  notif.onclick = function() {
+    // បើក Chat
+    if (!isChatOpen) {
+      toggleChat();
+    }
+    // បង្ហាញសាររបស់អ្នកនេះ
+    showChatMessages(peerId);
+    // លុប Notification
+    this.remove();
+    // Focus លើ Input
+    const chatInput = document.getElementById('chatInput');
+    if (chatInput) chatInput.focus();
+  };
+  
+  document.body.appendChild(notif);
+  
+  // បាត់បន្ទាប់ពី 10 វិនាទី
+  setTimeout(function() {
+    if (notif.parentNode) {
+      notif.style.opacity = '0';
+      notif.style.transition = 'opacity 0.3s';
+      setTimeout(function() { notif.remove(); }, 300);
+    }
+  }, 10000);
+}
+
+// ============================================================
+// CHAT BADGE
 // ============================================================
 function updateChatBadge() {
-  var badge = document.getElementById('chatBadgeCount');
+  const badge = document.getElementById('chatBadgeCount');
   if (!badge) return;
-  var totalUnread = 0;
-  for (var key in unreadChats) {
+  
+  let totalUnread = 0;
+  for (const key in unreadChats) {
     if (unreadChats.hasOwnProperty(key)) {
       totalUnread += unreadChats[key].count;
     }
@@ -382,67 +617,9 @@ function updateChatBadge() {
   if (totalUnread > 0) {
     badge.textContent = totalUnread > 99 ? '99+' : totalUnread;
     badge.style.display = 'inline-block';
-    document.title = '(' + totalUnread + ') ប្រព័ន្ធ Video Conference';
   } else {
     badge.style.display = 'none';
-    document.title = 'ប្រព័ន្ធ Video Conference';
   }
-  
-  if (navigator.setAppBadge) {
-    if (totalUnread > 0) {
-      navigator.setAppBadge(totalUnread)['catch'](function() {});
-    } else {
-      navigator.clearAppBadge()['catch'](function() {});
-    }
-  }
-}
-
-function showChatNotification(username, message, peerId) {
-  var elements = document.querySelectorAll('.chat-notification[data-peer="' + peerId + '"]');
-  elements.forEach(function(el) { el.remove(); });
-  
-  var notif = document.createElement('div');
-  notif.className = 'chat-notification';
-  notif.dataset.peer = peerId;
-  notif.innerHTML = `
-    <button class="close-notif" onclick="event.stopPropagation(); closeChatNotification(this.parentElement)">✕</button>
-    <div class="sender">👤 ${username}</div>
-    <div class="msg-preview">${message.length > 50 ? message.substring(0, 50) + '...' : message}</div>
-    <div class="time">${new Date().toLocaleTimeString()}</div>
-  `;
-  
-  notif.onclick = function() {
-    if (!isChatOpen) {
-      toggleChat();
-    }
-    var select = document.getElementById('chatRecipientSelect');
-    if (select) select.value = peerId;
-    if (unreadChats[peerId]) {
-      unreadChats[peerId].count = 0;
-      updateChatBadge();
-    }
-    notif.remove();
-    var input = document.getElementById('chatInput');
-    if (input) input.focus();
-  };
-  
-  document.body.appendChild(notif);
-  
-  setTimeout(function() {
-    if (notif.parentNode) {
-      notif.style.opacity = '0';
-      notif.style.transition = 'opacity 0.3s';
-      setTimeout(function() { notif.remove(); }, 300);
-    }
-  }, 10000);
-  
-  playNotificationSound('message');
-}
-
-function closeChatNotification(element) {
-  element.style.opacity = '0';
-  element.style.transition = 'opacity 0.3s';
-  setTimeout(function() { element.remove(); }, 300);
 }
 
 // ============================================================
@@ -450,17 +627,17 @@ function closeChatNotification(element) {
 // ============================================================
 function showToast(message, type) {
   if (type === undefined) type = 'info';
-  var colors = {
+  const colors = {
     success: '#10b981',
     error: '#ef4444',
     info: '#48cae4',
     warning: '#f59e0b'
   };
   
-  var toasts = document.querySelectorAll('.toast');
-  toasts.forEach(function(el) { el.remove(); });
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
   
-  var toast = document.createElement('div');
+  const toast = document.createElement('div');
   toast.className = 'toast';
   toast.style.background = colors[type] || '#48cae4';
   toast.textContent = message;
@@ -646,20 +823,17 @@ function selectRemoteTarget(targetId) {
 function switchAdminTab(tab) {
   console.log('🔄 Switching to tab:', tab);
   
-  // លាក់ Tab Panes ទាំងអស់
   var panes = document.querySelectorAll('.tab-pane');
   panes.forEach(function(el) {
     el.classList.add('hidden');
     el.style.display = 'none';
   });
   
-  // ដក Active Class ចេញពីប៊ូតុងទាំងអស់
   var buttons = document.querySelectorAll('.nav-tabs button');
   buttons.forEach(function(el) {
     el.classList.remove('active');
   });
 
-  // បង្ហាញ Tab ដែលបានជ្រើសរើស
   if (tab === 'rooms') {
     var tabRooms = document.getElementById('tab-rooms');
     if (tabRooms) {
@@ -801,39 +975,34 @@ async function loadUsersTable() {
 }
 
 // ============================================================
-// ADMIN JOIN ROOM - FIXED
+// ADMIN JOIN ROOM
 // ============================================================
 function adminJoinRoom(roomId) {
   currentRoomId = roomId;
 
-  // ១. កែសម្រួល body style
   const mainBody = document.getElementById('mainBody');
   if (mainBody) {
     mainBody.style.justifyContent = 'flex-start';
     mainBody.style.alignItems = 'stretch';
   }
 
-  // ២. លាក់ Admin Dashboard
   const adminDash = document.getElementById('admin-dashboard');
   if (adminDash) {
     adminDash.classList.add('hidden');
     adminDash.style.display = 'none';
   }
 
-  // ៣. បើកបង្ហាញ Room Container
   const roomContainer = document.getElementById('room-container');
   if (roomContainer) {
     roomContainer.classList.remove('hidden');
     roomContainer.style.display = 'flex';
   }
 
-  // ៤. ធ្វើបច្ចុប្បន្នភាព Welcome Header
   const welcomeText = document.getElementById('welcome-text');
   if (welcomeText) {
     welcomeText.textContent = `👋 សួស្តី Admin! កំពុងមើលបន្ទប់៖ ${currentRoomId}`;
   }
 
-  // ៥. បង្កើត Stream និងភ្ជាប់ Socket/PeerJS
   initDummyStream();
 
   if (myPeer && myPeer.id) {
@@ -851,12 +1020,11 @@ function adminJoinRoom(roomId) {
 }
 
 // ============================================================
-// LEAVE ROOM - FIXED
+// LEAVE ROOM
 // ============================================================
 function leaveRoom() {
   if (!confirm('តើអ្នកប្រាកដជាចង់ចាកចេញពីបន្ទប់នេះទេ?')) return;
 
-  // ១. បិទ Stream កាមេរ៉ា និង Screen Share ទាំងអស់
   if (localStream) {
     localStream.getTracks().forEach(track => track.stop());
     localStream = null;
@@ -870,7 +1038,6 @@ function leaveRoom() {
     screenStream = null;
   }
 
-  // ២. បិទការតភ្ជាប់ PeerJS ទាំងអស់
   if (peerCalls) {
     Object.keys(peerCalls).forEach(function(peerId) {
       if (peerCalls[peerId]) {
@@ -884,7 +1051,6 @@ function leaveRoom() {
     myPeer = null;
   }
 
-  // ៣. ផ្ញើសារប្រាប់ Server ថាចាកចេញពីបន្ទប់
   if (socket && socketConnected) {
     socket.emit('leave-room', { 
       roomId: currentRoomId, 
@@ -892,7 +1058,6 @@ function leaveRoom() {
     });
   }
 
-  // ៤. សម្អាត HTML Grid
   const videoGrid = document.getElementById('videoGrid');
   const screenGrid = document.getElementById('screenGrid');
   
@@ -903,7 +1068,6 @@ function leaveRoom() {
   }
   if (screenGrid) screenGrid.innerHTML = '';
 
-  // ៥. លាក់ Room UI & Chat Panel
   const roomContainer = document.getElementById('room-container');
   const chatPanel = document.getElementById('chat-panel');
   const meetingContainer = document.getElementById('meeting-container');
@@ -915,7 +1079,6 @@ function leaveRoom() {
   if (chatPanel) chatPanel.classList.add('hidden');
   if (meetingContainer) meetingContainer.classList.add('hidden');
 
-  // ៦. ត្រឡប់ទៅ Admin Dashboard បើជា Admin
   if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
     const adminDash = document.getElementById('admin-dashboard');
     if (adminDash) {
@@ -934,7 +1097,6 @@ function leaveRoom() {
     
     showToast('🚪 បានចាកចេញពីបន្ទប់ ត្រឡប់ទៅ Admin Dashboard វិញ', 'warning');
   } else {
-    // ប្រសិនបើជា User ធម្មតា ត្រឡប់ទៅ Login Form
     const authCard = document.getElementById('auth');
     if (authCard) {
       authCard.classList.remove('hidden');
@@ -950,12 +1112,12 @@ function leaveRoom() {
     showToast('🚪 បានចាកចេញពីបន្ទប់រៀបរយ!', 'warning');
   }
 
-  // ៧. កំណត់ស្ថានភាពអថេរឡើងវិញ
   currentRoomId = '';
   isCameraOn = false;
   isScreenSharing = false;
   isBeingControlled = false;
   isRemoteControlActive = false;
+  chatTargetPeerId = null;
   
   if (remotePointer) {
     remotePointer.remove();
@@ -963,13 +1125,16 @@ function leaveRoom() {
   }
 }
 
+function leaveMeeting() {
+  leaveRoom();
+}
+
 // ============================================================
-// ADMIN LOGOUT - FIXED
+// ADMIN LOGOUT
 // ============================================================
 function logoutAdmin() {
   if (!confirm('តើអ្នកប្រាកដថាចង់ចាកចេញពី Admin Dashboard ទេ?')) return;
 
-  // ១. បិទ Stream ទាំងអស់
   if (localStream) {
     localStream.getTracks().forEach(track => track.stop());
     localStream = null;
@@ -983,13 +1148,11 @@ function logoutAdmin() {
     screenStream = null;
   }
 
-  // ២. បិទ PeerJS
   if (myPeer) {
     myPeer.destroy();
     myPeer = null;
   }
 
-  // ៣. ផ្ញើសារប្រាប់ Server
   if (socket && socketConnected) {
     socket.emit('logout', { 
       peerId: myId,
@@ -998,7 +1161,6 @@ function logoutAdmin() {
     socket.disconnect();
   }
 
-  // ៤. លុបអថេរទាំងអស់
   myUsername = '';
   currentUserRole = '';
   currentRoomId = '';
@@ -1006,36 +1168,32 @@ function logoutAdmin() {
   pendingLoginData = null;
   isCameraOn = false;
   isScreenSharing = false;
+  chatTargetPeerId = null;
 
-  // ៥. បង្ហាញ Login Form វិញ
   const authCard = document.getElementById('auth');
   if (authCard) {
     authCard.classList.remove('hidden');
     authCard.style.display = 'block';
   }
 
-  // ៦. លាក់ Admin Dashboard
   const adminDash = document.getElementById('admin-dashboard');
   if (adminDash) {
     adminDash.classList.add('hidden');
     adminDash.style.display = 'none';
   }
 
-  // ៧. លាក់ Room Container
   const roomContainer = document.getElementById('room-container');
   if (roomContainer) {
     roomContainer.classList.add('hidden');
     roomContainer.style.display = 'none';
   }
 
-  // ៨. កែសម្រួល body style
   const mainBody = document.getElementById('mainBody');
   if (mainBody) {
     mainBody.style.justifyContent = 'center';
     mainBody.style.alignItems = 'center';
   }
 
-  // ៩. សម្អាត Grid
   const videoGrid = document.getElementById('videoGrid');
   const screenGrid = document.getElementById('screenGrid');
   if (videoGrid) videoGrid.innerHTML = '';
@@ -1043,7 +1201,6 @@ function logoutAdmin() {
 
   showToast('👋 បានចាកចេញដោយជោគជ័យ!', 'info');
 
-  // ១០. Reload ទំព័របន្ទាប់ពី 1 វិនាទី
   setTimeout(function() {
     window.location.reload();
   }, 1000);
@@ -1260,18 +1417,15 @@ function finalizeLogin(data) {
   currentUserRole = data.user.role;
   currentRoomId = pendingLoginData.roomId || document.getElementById('roomSelect').value;
 
-  // ១. កែសម្រួល body style
   const mainBody = document.getElementById('mainBody');
   if (mainBody) {
     mainBody.style.justifyContent = 'flex-start';
     mainBody.style.alignItems = 'stretch';
   }
 
-  // ២. លាក់ Form Login
   const authCard = document.getElementById('auth');
   if (authCard) authCard.classList.add('hidden');
 
-  // ៣. ឆែកមើល Role
   if (currentUserRole === 'admin' || currentUserRole === 'supervisor') {
     const adminDash = document.getElementById('admin-dashboard');
     if (adminDash) adminDash.classList.remove('hidden');
@@ -1281,7 +1435,6 @@ function finalizeLogin(data) {
     
     switchAdminTab('rooms');
   } else {
-    // ៤. បើក Room Container
     const roomContainer = document.getElementById('room-container');
     if (roomContainer) {
       roomContainer.classList.remove('hidden');
@@ -1546,46 +1699,6 @@ function stopScreenSharing() {
   showToast('🖥️ បានបញ្ឈប់ការចែករំលែក Screen', 'info');
 }
 
-function toggleChat() {
-  const chatPanel = document.getElementById('chat-panel');
-  if (!chatPanel) return;
-  isChatOpen = !isChatOpen;
-  if (isChatOpen) {
-    chatPanel.classList.remove('hidden');
-  } else {
-    chatPanel.classList.add('hidden');
-  }
-}
-
-function sendPrivateMessage() {
-  const recipientSelect = document.getElementById('chatRecipientSelect');
-  const chatInput = document.getElementById('chatInput');
-  if (!recipientSelect || !chatInput) return;
-
-  const targetPeerId = recipientSelect.value;
-  const message = chatInput.value.trim();
-
-  if (!targetPeerId) {
-    showToast('សូមជ្រើសរើសអ្នកទទួលសារ!', 'warning');
-    return;
-  }
-  if (!message) return;
-
-  socket.emit('send-private-message', {
-    targetPeerId: targetPeerId,
-    message: message,
-    fromUsername: myUsername
-  });
-
-  const chatMsgs = document.getElementById('chat-messages');
-  if (chatMsgs) {
-    chatMsgs.innerHTML += '<div class="msg-item my-msg"><b>To 👤 ' + (userNamesMap[targetPeerId] || 'User') + ':</b><br>' + message + '</div>';
-    chatMsgs.scrollTop = chatMsgs.scrollHeight;
-  }
-
-  chatInput.value = '';
-}
-
 function updateUserCount() {
   const countElem = document.getElementById('userCount');
   if (countElem) {
@@ -1594,29 +1707,20 @@ function updateUserCount() {
   }
 }
 
-function updateChatUserList() {
-  const select = document.getElementById('chatRecipientSelect');
-  if (!select) return;
-  
-  const currentVal = select.value;
-  select.innerHTML = '<option value="">-- ជ្រើសរើសអ្នកទទួលសារ --</option>';
-
-  for (let pId in userNamesMap) {
-    if (pId !== myId) {
-      select.innerHTML += `<option value="${pId}">👤 ${userNamesMap[pId]}</option>`;
-    }
-  }
-  select.value = currentVal;
-}
-
-function leaveMeeting() {
-  leaveRoom();
-}
-
 // ============================================================
 // INITIALIZATION
 // ============================================================
 window.addEventListener('DOMContentLoaded', function() {
   connectSocket();
   loadRooms();
+  
+  // Chat Input Enter Key
+  const chatInput = document.getElementById('chatInput');
+  if (chatInput) {
+    chatInput.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        sendPrivateMessage();
+      }
+    });
+  }
 });
