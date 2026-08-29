@@ -766,15 +766,39 @@ function adminJoinRoom(roomId) {
   currentRoomId = roomId;
 
   // ១. លាក់ Admin Dashboard
-  var adminDash = document.getElementById('admin-dashboard');
-  if (adminDash) adminDash.classList.add('hidden');
+  const adminDash = document.getElementById('admin-dashboard');
+  if (adminDash) {
+    adminDash.classList.add('hidden');
+    adminDash.style.display = 'none'; // បង្ខំបិទ Admin Dashboard
+  }
 
-  // ២. បើកបង្ហាញ Meeting Container
-  var meetingContainer = document.getElementById('meeting-container');
-  if (meetingContainer) meetingContainer.classList.remove('hidden');
+  // ២. បើកបង្ហាញ Meeting Container និងធាតុទាំងអស់របស់វា
+  const meetingContainer = document.getElementById('meeting-container');
+  if (meetingContainer) {
+    meetingContainer.classList.remove('hidden');
+    meetingContainer.style.display = 'block'; // ឬ 'flex' តាម Layout ដើម
+  }
+
+  // បើកបង្ហាញ Element ផ្សេងៗដែលនៅក្នុង Meeting បើវាមាន Class hidden
+  const elementsToShow = [
+    'meeting-header',
+    'meeting-sidebar',
+    'video-container',
+    'screenGrid',
+    'videoGrid',
+    'controls-bar'
+  ];
+
+  elementsToShow.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.classList.remove('hidden');
+      el.style.display = ''; // Reset inline display
+    }
+  });
 
   // ៣. បង្ហាញឈ្មោះបន្ទប់នៅលើ Header
-  var displayRoom = document.getElementById('displayRoomId');
+  const displayRoom = document.getElementById('displayRoomId');
   if (displayRoom) displayRoom.textContent = currentRoomId;
 
   // ៤. ដំណើរការ Dummy Stream និង PeerJS ដើម្បីភ្ជាប់ចូលបន្ទប់
@@ -793,7 +817,6 @@ function adminJoinRoom(roomId) {
 
   showToast('🚪 បានចូលរួមបន្ទប់៖ ' + currentRoomId, 'success');
 }
-
 // ============================================================
 // ADMIN LOGOUT (FIXED & BOTH NAMES)
 // ============================================================
