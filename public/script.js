@@ -191,13 +191,22 @@ function connectSocket() {
       updateChatUserList();
       playNotificationSound('join');
       
-      // ✅ FIX: អ្នកដែលនៅក្នុងបន្ទប់ស្រាប់ត្រូវតែហៅ connectToUser()
-      // ទៅអ្នកចូលថ្មី ដើម្បីបង្កើតការតភ្ជាប់ពីរទិស
+      // ✅ FIX: Connect to the new user
       if (!peerCalls[peerId]) {
         setTimeout(function() {
           connectToUser(peerId);
         }, 500);
       }
+
+      // ✅ FIX: Ensure all existing users connect to each other
+      // This allows user 2 and user 3 to see each other
+      setTimeout(function() {
+        Object.keys(userNamesMap).forEach(function(otherPeerId) {
+          if (otherPeerId !== myId && otherPeerId !== peerId && !peerCalls[otherPeerId]) {
+            connectToUser(otherPeerId);
+          }
+        });
+      }, 1000);
 
       if (isScreenSharing && screenStream && myPeer) {
         setTimeout(function() {
@@ -263,15 +272,12 @@ function connectSocket() {
     }
   });
 
-  // ✅ FIX: បន្ថែមការស្តាប់ rooms-update សម្រាប់ admin dashboard
   socket.on('rooms-update', function() {
     console.log('🔄 Rooms update received');
-    // បើ admin dashboard កំពុងបង្ហាញ ធ្វើបច្ចុប្បន្នភាពភ្លាម
     const adminDash = document.getElementById('admin-dashboard');
     if (adminDash && !adminDash.classList.contains('hidden')) {
       loadAdminRoomMonitor();
     }
-    // បើកំពុងនៅក្នុងបន្ទប់ ធ្វើបច្ចុប្បន្នភាពចំនួនអ្នកប្រើ
     const roomContainer = document.getElementById('room-container');
     if (roomContainer && !roomContainer.classList.contains('hidden')) {
       updateUserCount();
@@ -896,12 +902,17 @@ function initPeerJS() {
         delete peerCalls[call.peer];
       });
 
+      // ✅ FIX: Always keep the latest call, close old one if exists
       if (type !== 'screen') {
-        if (!peerCalls[call.peer]) {
-          peerCalls[call.peer] = call;
-        } else {
-          console.log(`⚠️ Duplicate call detected for ${call.peer} — keeping existing tracked call, this incoming call still answers normally but is not tracked for track-replacement.`);
+        if (peerCalls[call.peer]) {
+          console.log(`⚠️ Closing old call with ${call.peer}, replacing with new one`);
+          try {
+            peerCalls[call.peer].close();
+          } catch (e) {}
+          delete peerCalls[call.peer];
         }
+        peerCalls[call.peer] = call;
+        console.log(`✅ Tracked call with ${call.peer}`);
       }
     });
 
@@ -1013,6 +1024,18 @@ function addRemoteVideo(peerId, username) {
   card.innerHTML = `
     <div class="name-tag">👤 ${username}</div>
     <video id="stream-${peerId}" autoplay playsinline></video>
+    <div id="placeholder-${peerId}" style="
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0f172a;
+      color: #94a3b8;
+      font-size: 14px;
+      pointer-events: none;
+      z-index: 1;
+    ">⏳ កំពុងរង់ចាំវីដេអូ...</div>
   `;
   if (videoGrid) videoGrid.appendChild(card);
 
@@ -1022,12 +1045,30 @@ function addRemoteVideo(peerId, username) {
 
 function attachRemoteStream(peerId, stream) {
   const videoElem = document.getElementById('stream-' + peerId);
+  const placeholder = document.getElementById('placeholder-' + peerId);
+  
   if (videoElem) {
+    const videoTrack = stream.getVideoTracks()[0];
+    
+    if (!videoTrack) {
+      console.log(`⚠️ No video track for ${peerId}, showing placeholder`);
+      videoElem.srcObject = null;
+      if (placeholder) placeholder.style.display = 'flex';
+      return;
+    }
+    
+    if (placeholder) placeholder.style.display = 'none';
+    
     videoElem.srcObject = stream;
     const playPromise = videoElem.play();
     if (playPromise && playPromise.catch) {
       playPromise.catch(function(err) {
         console.log('⚠️ Remote video play blocked, will retry on user interaction:', err);
+        setTimeout(function() {
+          if (videoElem.srcObject === stream) {
+            videoElem.play().catch(function() {});
+          }
+        }, 1000);
       });
     }
   }
