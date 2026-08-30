@@ -164,6 +164,12 @@ function connectSocket() {
 
   socket.on('room-joined', function(data) {
     console.log('🏠 Joined room:', data.roomId);
+    // 🔍 DIAGNOSTIC: this is exactly what the SERVER told us about who's
+    // already in the room. If someone (e.g. User 2) is missing from this
+    // array, the bug is on the server side (the join-room handler /
+    // room membership tracking) — this client has no way to know about a
+    // user that was never listed here in the first place.
+    console.log('🔍 [DIAGNOSTIC] existingUsers from server:', JSON.stringify(data.existingUsers));
     if (data.existingUsers) {
       data.existingUsers.forEach(function(user) {
         if (user.peerId !== myId) {
@@ -181,10 +187,12 @@ function connectSocket() {
       updateUserCount();
       updateChatUserList();
     }
+    console.log('🔍 [DIAGNOSTIC] userNamesMap after room-joined:', JSON.stringify(userNamesMap));
   });
 
   socket.on('user-joined', function(data) {
-    console.log('👤 User joined:', data.username);
+    console.log('👤 User joined:', data.username, '| peerId:', data.peerId);
+    console.log('🔍 [DIAGNOSTIC] full user-joined payload:', JSON.stringify(data));
     var peerId = data.peerId;
     var username = data.username;
     
