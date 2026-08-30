@@ -169,10 +169,6 @@ function connectSocket() {
         if (user.peerId !== myId) {
           userNamesMap[user.peerId] = user.username;
           addRemoteVideo(user.peerId, user.username);
-          // ✅ FIX: The NEW joiner is the ONLY side that initiates the call
-          // to each existing user. PeerJS calls are already bidirectional
-          // (call.answer() sends media back on the SAME connection), so the
-          // existing user does NOT need to call back — see 'user-joined' below.
           setTimeout(function() {
             connectToUser(user.peerId);
           }, 500);
@@ -195,17 +191,21 @@ function connectSocket() {
       updateChatUserList();
       playNotificationSound('join');
       
-      // ✅ FIX: Do NOT call connectToUser() here anymore.
-      // The new joiner already calls US (see 'room-joined' handler on their
-      // side). If both sides call each other, TWO separate PeerJS calls get
-      // created for the same pair of peers, and peerCalls[peerId] can only
-      // hold one of them — the other becomes "orphaned": its media keeps
-      // flowing on a live connection, but updateStreamToAllPeers() (used by
-      // toggleCamera/toggleMic) can no longer find it to replaceTrack().
-      // That's exactly why a late joiner's camera never reached admin until
-      // admin left and rejoined (which reset everything to a single call).
-      // We simply wait for their incoming call and answer it below in
-      // myPeer.on('call', ...).
+      // Connect to the new user
+      if (!peerCalls[peerId]) {
+        setTimeout(function() {
+          connectToUser(peerId);
+        }, 500);
+      }
+
+      // Ensure all existing users connect to each other
+      setTimeout(function() {
+        Object.keys(userNamesMap).forEach(function(otherPeerId) {
+          if (otherPeerId !== myId && otherPeerId !== peerId && !peerCalls[otherPeerId]) {
+            connectToUser(otherPeerId);
+          }
+        });
+      }, 1000);
 
       if (isScreenSharing && screenStream && myPeer) {
         setTimeout(function() {
@@ -273,10 +273,14 @@ function connectSocket() {
 
   socket.on('rooms-update', function() {
     console.log('🔄 Rooms update received');
-    if ((currentUserRole === 'admin' || currentUserRole === 'supervisor') && 
-        document.getElementById('admin-dashboard') &&
-        !document.getElementById('admin-dashboard').classList.contains('hidden')) {
+    const adminDash = document.getElementById('admin-dashboard');
+    if (adminDash && !adminDash.classList.contains('hidden')) {
       loadAdminRoomMonitor();
+    }
+    const roomContainer = document.getElementById('room-container');
+    if (roomContainer && !roomContainer.classList.contains('hidden')) {
+      updateUserCount();
+      updateChatUserList();
     }
   });
 
@@ -680,7 +684,7 @@ function showChatNotification(username, message, peerId) {
 }
 
 // ============================================================
-// MEDIA LIGHTBOX (click camera/screen video to enlarge)
+// MEDIA LIGHTBOX
 // ============================================================
 
 function injectLightboxStyles() {
@@ -756,7 +760,6 @@ function closeLightbox() {
   if (video) video.srcObject = null;
 }
 
-// Makes a <video> element clickable to open it enlarged in the lightbox.
 function makeZoomable(videoElem, labelText) {
   if (!videoElem || videoElem.dataset.zoomBound === '1') return;
   videoElem.classList.add('zoomable-video');
@@ -776,6 +779,7 @@ function attachIceDiagnostics(call, peerId, label) {
   call.peerConnection.oniceconnectionstatechange = function() {
     const state = call.peerConnection.iceConnectionState;
     console.log(`🧊 [${label}] ICE state with ${peerId}:`, state);
+    // Only show warning on failed, not on checking
     if (state === 'failed') {
       console.log(`❌ [${label}] ICE FAILED with ${peerId}`);
       showToast('⚠️ ការតភ្ជាប់ជាមួយអ្នកប្រើម្នាក់មានបញ្ហា (Network)', 'warning');
@@ -784,7 +788,7 @@ function attachIceDiagnostics(call, peerId, label) {
 }
 
 // ============================================================
-// UPDATE STREAM TO ALL PEERS - FIXED
+// UPDATE STREAM TO ALL PEERS
 // ============================================================
 function updateStreamToAllPeers(stream) {
   if (!stream) return;
@@ -797,19 +801,11 @@ function updateStreamToAllPeers(stream) {
     if (call && call.peerConnection) {
       const senders = call.peerConnection.getSenders();
 
-      // ✅ FIX: previously only the VIDEO sender's track was ever replaced.
-      // The AUDIO sender kept sending the original dummy stream's disabled
-      // (silent) oscillator track forever — even after the camera/mic
-      // stream replaced localStream — so nobody could ever hear you talk
-      // once you switched from the dummy stream to your real camera+mic.
-      // Both tracks must be replaced together whenever localStream changes.
       if (videoTrack) {
         const videoSender = senders.find(s => s.track && s.track.kind === 'video');
         if (videoSender) {
           videoSender.replaceTrack(videoTrack);
           console.log(`✅ Updated video track for peer: ${peerId}`);
-        } else {
-          console.log(`⚠️ No video sender found for peer ${peerId}`);
         }
       }
 
@@ -818,8 +814,6 @@ function updateStreamToAllPeers(stream) {
         if (audioSender) {
           audioSender.replaceTrack(audioTrack);
           console.log(`✅ Updated audio track for peer: ${peerId}`);
-        } else {
-          console.log(`⚠️ No audio sender found for peer ${peerId}`);
         }
       }
     }
@@ -876,7 +870,6 @@ function initPeerJS() {
         initDummyStream();
       }
       
-      // ✅ FIX: Answer with current localStream
       call.answer(localStream);
 
       const type = (call.metadata && call.metadata.type) || 'video';
@@ -904,18 +897,16 @@ function initPeerJS() {
         delete peerCalls[call.peer];
       });
 
-      // ✅ FIX: Only track this call in peerCalls if it's a regular video
-      // call (not a screen-share call), and only if we don't already have
-      // an outgoing call tracked for this peer. This prevents an incoming
-      // call from silently overwriting — or being silently discarded by —
-      // an existing outgoing call to the same peer, which was the root
-      // cause of camera updates not reaching some participants.
       if (type !== 'screen') {
-        if (!peerCalls[call.peer]) {
-          peerCalls[call.peer] = call;
-        } else {
-          console.log(`⚠️ Duplicate call detected for ${call.peer} — keeping existing tracked call, this incoming call still answers normally but is not tracked for track-replacement.`);
+        if (peerCalls[call.peer]) {
+          console.log(`⚠️ Closing old call with ${call.peer}, replacing with new one`);
+          try {
+            peerCalls[call.peer].close();
+          } catch (e) {}
+          delete peerCalls[call.peer];
         }
+        peerCalls[call.peer] = call;
+        console.log(`✅ Tracked call with ${call.peer}`);
       }
     });
 
@@ -940,10 +931,27 @@ function initPeerJS() {
   }
 }
 
+// ============================================================
+// CONNECT TO USER - FIXED WITH TIMEOUT
+// ============================================================
 function connectToUser(peerId) {
-  if (!myPeer || peerCalls[peerId]) {
-    console.log('Already connected or no peer:', peerId);
-    return;
+  if (!myPeer) return;
+  
+  const existingCall = peerCalls[peerId];
+  if (existingCall) {
+    if (existingCall.peerConnection) {
+      const iceState = existingCall.peerConnection.iceConnectionState;
+      const connState = existingCall.peerConnection.connectionState;
+      
+      // If already connecting or connected, don't call again
+      if (iceState === 'connected' || iceState === 'completed' || 
+          iceState === 'checking' || connState === 'connected') {
+        console.log(`⏳ Already connecting or connected to ${peerId}, skipping`);
+        return;
+      }
+    }
+    try { existingCall.close(); } catch (e) {}
+    delete peerCalls[peerId];
   }
   
   if (!localStream) {
@@ -957,16 +965,36 @@ function connectToUser(peerId) {
 
   attachIceDiagnostics(call, peerId, 'video (outgoing)');
 
+  // Timeout for ICE - if not connected after 15 seconds, retry
+  let iceTimeout = setTimeout(function() {
+    if (call && call.peerConnection) {
+      const state = call.peerConnection.iceConnectionState;
+      if (state !== 'connected' && state !== 'completed') {
+        console.log(`⏰ ICE timeout for ${peerId}, state: ${state} — closing and retrying`);
+        try { call.close(); } catch (e) {}
+        delete peerCalls[peerId];
+        setTimeout(function() {
+          if (peerCalls[peerId] === undefined) {
+            connectToUser(peerId);
+          }
+        }, 2000);
+      }
+    }
+  }, 15000);
+
   call.on('stream', function(remoteStream) {
+    clearTimeout(iceTimeout);
     console.log('📺 Stream received from:', peerId);
     attachRemoteStream(peerId, remoteStream);
   });
 
   call.on('error', function(err) {
+    clearTimeout(iceTimeout);
     console.log('❌ Call error with', peerId, err);
   });
 
   call.on('close', function() {
+    clearTimeout(iceTimeout);
     console.log('Call closed with:', peerId);
     removeRemoteVideo(peerId);
     delete peerCalls[peerId];
@@ -1027,6 +1055,18 @@ function addRemoteVideo(peerId, username) {
   card.innerHTML = `
     <div class="name-tag">👤 ${username}</div>
     <video id="stream-${peerId}" autoplay playsinline></video>
+    <div id="placeholder-${peerId}" style="
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0f172a;
+      color: #94a3b8;
+      font-size: 14px;
+      pointer-events: none;
+      z-index: 1;
+    ">⏳ កំពុងរង់ចាំវីដេអូ...</div>
   `;
   if (videoGrid) videoGrid.appendChild(card);
 
@@ -1036,12 +1076,30 @@ function addRemoteVideo(peerId, username) {
 
 function attachRemoteStream(peerId, stream) {
   const videoElem = document.getElementById('stream-' + peerId);
+  const placeholder = document.getElementById('placeholder-' + peerId);
+  
   if (videoElem) {
+    const videoTrack = stream.getVideoTracks()[0];
+    
+    if (!videoTrack) {
+      console.log(`⚠️ No video track for ${peerId}, showing placeholder`);
+      videoElem.srcObject = null;
+      if (placeholder) placeholder.style.display = 'flex';
+      return;
+    }
+    
+    if (placeholder) placeholder.style.display = 'none';
+    
     videoElem.srcObject = stream;
     const playPromise = videoElem.play();
     if (playPromise && playPromise.catch) {
       playPromise.catch(function(err) {
         console.log('⚠️ Remote video play blocked, will retry on user interaction:', err);
+        setTimeout(function() {
+          if (videoElem.srcObject === stream) {
+            videoElem.play().catch(function() {});
+          }
+        }, 1000);
       });
     }
   }
@@ -1106,26 +1164,15 @@ function updateUserCount() {
 }
 
 // ============================================================
-// MEDIA TOGGLE & SCREEN SHARE - FIXED
+// MEDIA TOGGLE & SCREEN SHARE
 // ============================================================
 
 function toggleMic() {
   if (!localStream) return;
   isMicOn = !isMicOn;
 
-  // Mute/unmute on the current localStream (keeps things consistent for
-  // any future replaceTrack() call, e.g. when toggling the camera).
   localStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
 
-  // ✅ FIX: Previously ONLY localStream's track was toggled. That works
-  // only if the track object on localStream is the exact same object
-  // object currently attached to each peer connection's audio sender.
-  // If they ever drift apart (e.g. a connection whose track wasn't
-  // re-synced), muting locally had no effect on what others actually
-  // heard. To guarantee mute always works, we now also grab whatever
-  // track each RTCRtpSender is ACTUALLY sending right now and toggle
-  // .enabled on that directly — this is what really controls whether
-  // silence goes out over the connection.
   Object.keys(peerCalls).forEach(peerId => {
     const call = peerCalls[peerId];
     if (call && call.peerConnection) {
@@ -1142,7 +1189,6 @@ function toggleMic() {
 
 async function toggleCamera() {
   if (isCameraOn) {
-    // ====== បិទកាមេរ៉ា ======
     if (cameraStream) {
       cameraStream.getTracks().forEach(track => track.stop());
       cameraStream = null;
@@ -1155,7 +1201,6 @@ async function toggleCamera() {
     showToast('📷 បានបិទកាមេរ៉ា', 'info');
     
   } else {
-    // ====== បើកកាមេរ៉ា ======
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
@@ -1165,19 +1210,14 @@ async function toggleCamera() {
         audio: true 
       });
 
-      // ✅ FIX: keep the mic mute state consistent — getUserMedia() always
-      // returns tracks with enabled = true by default, which would silently
-      // "unmute" someone who had muted while still on the dummy stream.
       cameraStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
       
       isCameraOn = true;
       if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
       
-      // ប្តូរ localStream ទៅជា cameraStream
       localStream = cameraStream;
       if (localVideo) localVideo.srcObject = localStream;
       
-      // ✅ FIX: បញ្ជូន Camera Stream ទៅអ្នកប្រើទាំងអស់
       updateStreamToAllPeers(localStream);
       
       showToast('📷 បានបើកកាមេរ៉ា', 'success');
@@ -1216,9 +1256,6 @@ async function toggleScreenShare() {
           });
           attachIceDiagnostics(call, peerId, 'screen (outgoing)');
           screenShareSentTo[peerId] = true;
-          // Note: screen-share calls are intentionally NOT stored in
-          // peerCalls, since that map is reserved for the video calls that
-          // updateStreamToAllPeers()/toggleCamera() operate on.
         }
       });
       
@@ -1264,15 +1301,8 @@ async function toggleScreenShare() {
 }
 
 // ============================================================
-// MESH HEALTH CHECK — self-heals missing connections
+// MESH HEALTH CHECK - FIXED
 // ============================================================
-// Every few seconds, make sure we have a working video call AND (if we're
-// screen-sharing) a screen-share call with every user currently in the
-// room, no matter when they joined. If any pair is missing — e.g. because
-// a signal was dropped, or a server-side race meant an existingUsers list
-// didn't include everyone — this quietly retries the connection instead of
-// leaving that participant permanently invisible to some other user until
-// someone reloads.
 function startMeshHealthCheck() {
   if (meshCheckTimer) return;
   meshCheckTimer = setInterval(function() {
@@ -1281,23 +1311,48 @@ function startMeshHealthCheck() {
     Object.keys(userNamesMap).forEach(function(peerId) {
       if (peerId === myId) return;
 
-      // --- Camera / mic video call ---
       const call = peerCalls[peerId];
-      const isHealthy = call && call.peerConnection && (
-        call.peerConnection.connectionState === 'connected' ||
-        call.peerConnection.iceConnectionState === 'connected' ||
-        call.peerConnection.iceConnectionState === 'completed'
-      );
-      if (!isHealthy) {
-        console.log(`🔧 Mesh check: no healthy video call with ${peerId} (${userNamesMap[peerId]}) — retrying`);
-        if (call) {
-          try { call.close(); } catch (e) {}
-          delete peerCalls[peerId];
+      
+      // Check if call is healthy or still connecting
+      let isHealthy = false;
+      let isFailed = true;
+      
+      if (call && call.peerConnection) {
+        const iceState = call.peerConnection.iceConnectionState;
+        const connState = call.peerConnection.connectionState;
+        
+        // Healthy states
+        if (iceState === 'connected' || iceState === 'completed' || 
+            connState === 'connected') {
+          isHealthy = true;
+          isFailed = false;
         }
-        connectToUser(peerId);
+        // Still connecting - allow time
+        else if (iceState === 'checking' || iceState === 'new') {
+          isHealthy = true;
+          isFailed = false;
+        }
+        // Failed states
+        else if (iceState === 'failed' || iceState === 'disconnected' || 
+                 connState === 'failed' || connState === 'disconnected') {
+          isHealthy = false;
+          isFailed = true;
+        }
+      }
+      
+      // Only retry if no call or call is failed
+      if (!call || isFailed) {
+        if (!isHealthy) {
+          console.log(`🔧 Mesh check: no healthy video call with ${peerId} (${userNamesMap[peerId]}) — retrying`);
+          if (call) {
+            try { call.close(); } catch (e) {}
+            delete peerCalls[peerId];
+          }
+          connectToUser(peerId);
+        }
       }
 
-      // --- Screen share (only if we're currently sharing) ---
+      // Screen share
       if (isScreenSharing && screenStream && myPeer && !screenShareSentTo[peerId]) {
         console.log(`🔧 Mesh check: ${peerId} (${userNamesMap[peerId]}) is missing our screen share — sending`);
         const screenCall = myPeer.call(peerId, screenStream, {
@@ -1307,7 +1362,7 @@ function startMeshHealthCheck() {
         screenShareSentTo[peerId] = true;
       }
     });
-  }, 4000);
+  }, 8000); // Check every 8 seconds
 }
 
 function stopMeshHealthCheck() {
@@ -1318,15 +1373,12 @@ function stopMeshHealthCheck() {
 }
 
 // ============================================================
-// SCREEN SHARE BUTTON UI (toggle label: Share <-> Stop Sharing)
+// SCREEN SHARE BUTTON UI
 // ============================================================
 function updateScreenShareButtonUI() {
-  // Works regardless of the button's id — finds it by its onclick attribute,
-  // matching the inline onclick="toggleScreenShare()" pattern used elsewhere
-  // in this app (e.g. onclick="adminJoinRoom(...)").
   const btn = document.querySelector('[onclick*="toggleScreenShare"]');
   if (!btn) {
-    console.log('⚠️ Share-screen button not found (no element with onclick="toggleScreenShare()")');
+    console.log('⚠️ Share-screen button not found');
     return;
   }
 
@@ -1336,16 +1388,12 @@ function updateScreenShareButtonUI() {
 
   if (isScreenSharing) {
     btn.innerHTML = '⏹️ បិទ Share Screen';
-    // !important + setProperty guarantees this beats any CSS class the
-    // button already has (e.g. btn-success), so it reliably turns red.
     btn.style.setProperty('background', '#ef4444', 'important');
     btn.style.setProperty('background-color', '#ef4444', 'important');
     btn.style.setProperty('color', '#fff', 'important');
     btn.classList.add('sharing-active');
   } else {
     btn.innerHTML = btn.dataset.origHtml;
-    // Fully remove our inline overrides so the button falls back to
-    // whatever its original CSS class/stylesheet defines.
     btn.style.removeProperty('background');
     btn.style.removeProperty('background-color');
     btn.style.removeProperty('color');
@@ -1967,7 +2015,6 @@ window.addEventListener('DOMContentLoaded', function() {
     });
   }
 
-  // Make your own camera preview clickable to enlarge too
   if (localVideo) {
     makeZoomable(localVideo, '👤 ' + (myUsername || 'អ្នក'));
   }
