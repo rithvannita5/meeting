@@ -28,6 +28,11 @@ let dummyAnimFrame = null;
 let allRoomsList = [];
 let pendingLoginData = null;
 
+// Tracks which peers we've already sent our screen-share stream to, so the
+// mesh health-check can top up anyone who's missing it.
+let screenShareSentTo = {};
+let meshCheckTimer = null;
+
 const localVideo = document.getElementById('localVideo');
 const screenGrid = document.getElementById('screenGrid');
 const videoGrid = document.getElementById('videoGrid');
@@ -208,6 +213,7 @@ function connectSocket() {
             metadata: { type: 'screen', username: myUsername }
           });
           attachIceDiagnostics(call, peerId, 'screen (outgoing, late-join)');
+          screenShareSentTo[peerId] = true;
         }, 1000);
       }
     }
@@ -226,6 +232,7 @@ function connectSocket() {
     }
     
     delete userNamesMap[peerId];
+    delete screenShareSentTo[peerId];
     updateUserCount();
     updateChatUserList();
     playNotificationSound('leave');
@@ -1190,6 +1197,7 @@ async function toggleScreenShare() {
       screenStream = null;
     }
     isScreenSharing = false;
+    screenShareSentTo = {};
     showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
     const screenGridElem = document.getElementById('screenGrid');
     if (screenGridElem) screenGridElem.innerHTML = '';
@@ -1199,6 +1207,7 @@ async function toggleScreenShare() {
     try {
       screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       isScreenSharing = true;
+      screenShareSentTo = {};
       
       Object.keys(userNamesMap).forEach(peerId => {
         if (peerId !== myId && myPeer) {
@@ -1206,6 +1215,7 @@ async function toggleScreenShare() {
             metadata: { type: 'screen', username: myUsername }
           });
           attachIceDiagnostics(call, peerId, 'screen (outgoing)');
+          screenShareSentTo[peerId] = true;
           // Note: screen-share calls are intentionally NOT stored in
           // peerCalls, since that map is reserved for the video calls that
           // updateStreamToAllPeers()/toggleCamera() operate on.
@@ -1251,6 +1261,60 @@ async function toggleScreenShare() {
   }
 
   updateScreenShareButtonUI();
+}
+
+// ============================================================
+// MESH HEALTH CHECK — self-heals missing connections
+// ============================================================
+// Every few seconds, make sure we have a working video call AND (if we're
+// screen-sharing) a screen-share call with every user currently in the
+// room, no matter when they joined. If any pair is missing — e.g. because
+// a signal was dropped, or a server-side race meant an existingUsers list
+// didn't include everyone — this quietly retries the connection instead of
+// leaving that participant permanently invisible to some other user until
+// someone reloads.
+function startMeshHealthCheck() {
+  if (meshCheckTimer) return;
+  meshCheckTimer = setInterval(function() {
+    if (!myPeer || !socketConnected) return;
+
+    Object.keys(userNamesMap).forEach(function(peerId) {
+      if (peerId === myId) return;
+
+      // --- Camera / mic video call ---
+      const call = peerCalls[peerId];
+      const isHealthy = call && call.peerConnection && (
+        call.peerConnection.connectionState === 'connected' ||
+        call.peerConnection.iceConnectionState === 'connected' ||
+        call.peerConnection.iceConnectionState === 'completed'
+      );
+      if (!isHealthy) {
+        console.log(`🔧 Mesh check: no healthy video call with ${peerId} (${userNamesMap[peerId]}) — retrying`);
+        if (call) {
+          try { call.close(); } catch (e) {}
+          delete peerCalls[peerId];
+        }
+        connectToUser(peerId);
+      }
+
+      // --- Screen share (only if we're currently sharing) ---
+      if (isScreenSharing && screenStream && myPeer && !screenShareSentTo[peerId]) {
+        console.log(`🔧 Mesh check: ${peerId} (${userNamesMap[peerId]}) is missing our screen share — sending`);
+        const screenCall = myPeer.call(peerId, screenStream, {
+          metadata: { type: 'screen', username: myUsername }
+        });
+        attachIceDiagnostics(screenCall, peerId, 'screen (outgoing, mesh-heal)');
+        screenShareSentTo[peerId] = true;
+      }
+    });
+  }, 4000);
+}
+
+function stopMeshHealthCheck() {
+  if (meshCheckTimer) {
+    clearInterval(meshCheckTimer);
+    meshCheckTimer = null;
+  }
 }
 
 // ============================================================
@@ -1572,10 +1636,13 @@ function startMeeting() {
 
   initDummyStream();
   initPeerJS();
+  startMeshHealthCheck();
 }
 
 function leaveRoom() {
   if (!confirm('តើអ្នកប្រាកដជាចង់ចាកចេញពីបន្ទប់នេះទេ?')) return;
+
+  stopMeshHealthCheck();
 
   if (localStream) {
     localStream.getTracks().forEach(track => track.stop());
