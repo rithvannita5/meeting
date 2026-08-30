@@ -1105,7 +1105,31 @@ function updateUserCount() {
 function toggleMic() {
   if (!localStream) return;
   isMicOn = !isMicOn;
+
+  // Mute/unmute on the current localStream (keeps things consistent for
+  // any future replaceTrack() call, e.g. when toggling the camera).
   localStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
+
+  // ✅ FIX: Previously ONLY localStream's track was toggled. That works
+  // only if the track object on localStream is the exact same object
+  // object currently attached to each peer connection's audio sender.
+  // If they ever drift apart (e.g. a connection whose track wasn't
+  // re-synced), muting locally had no effect on what others actually
+  // heard. To guarantee mute always works, we now also grab whatever
+  // track each RTCRtpSender is ACTUALLY sending right now and toggle
+  // .enabled on that directly — this is what really controls whether
+  // silence goes out over the connection.
+  Object.keys(peerCalls).forEach(peerId => {
+    const call = peerCalls[peerId];
+    if (call && call.peerConnection) {
+      const senders = call.peerConnection.getSenders();
+      const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+      if (audioSender && audioSender.track) {
+        audioSender.track.enabled = isMicOn;
+      }
+    }
+  });
+
   showToast(isMicOn ? '🎤 បានបើក Mic' : '🎙️❌ បានបិទ Mic', 'info');
 }
 
@@ -1133,6 +1157,11 @@ async function toggleCamera() {
         }, 
         audio: true 
       });
+
+      // ✅ FIX: keep the mic mute state consistent — getUserMedia() always
+      // returns tracks with enabled = true by default, which would silently
+      // "unmute" someone who had muted while still on the dummy stream.
+      cameraStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
       
       isCameraOn = true;
       if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
