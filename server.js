@@ -332,6 +332,7 @@ io.on('connection', (socket) => {
       }
       if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
     }
+    // ✅ FIX: បញ្ជូន rooms-update ទៅកាន់អ្នកគ្រប់គ្នា (រួមទាំង admin)
     io.emit('rooms-update');
   });
 });
