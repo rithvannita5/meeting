@@ -284,7 +284,10 @@ io.on('connection', (socket) => {
     const existingUsersData = existingUsers.map(u => ({ peerId: u.peerId, username: u.username }));
     socket.emit('room-joined', { roomId, existingUsers: existingUsersData });
     
+    // ✅ FIX: Send to everyone in the room (including the new user)
     socket.to(roomId).emit('user-joined', { peerId, username });
+    
+    // ✅ FIX: Send rooms update to everyone
     io.emit('rooms-update');
   });
 
@@ -332,7 +335,6 @@ io.on('connection', (socket) => {
       }
       if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
     }
-    // ✅ FIX: បញ្ជូន rooms-update ទៅកាន់អ្នកគ្រប់គ្នា (រួមទាំង admin)
     io.emit('rooms-update');
   });
 });
