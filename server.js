@@ -20,7 +20,7 @@ const peerServer = ExpressPeerServer(server, {
 app.use('/peerjs', peerServer);
 
 // ============================================================
-// SOCKET.IO CONFIG - SIMPLIFIED
+// SOCKET.IO CONFIG
 // ============================================================
 const io = new Server(server, {
   cors: {
@@ -254,7 +254,7 @@ app.get('/api/rooms', async (req, res) => {
 });
 
 // ============================================================
-// SOCKET.IO LOGIC - SIMPLIFIED
+// SOCKET.IO LOGIC
 // ============================================================
 io.on('connection', (socket) => {
   console.log('🔌 Socket connected:', socket.id);
@@ -284,10 +284,10 @@ io.on('connection', (socket) => {
     const existingUsersData = existingUsers.map(u => ({ peerId: u.peerId, username: u.username }));
     socket.emit('room-joined', { roomId, existingUsers: existingUsersData });
     
-    // ✅ FIX: Send to everyone in the room (including the new user)
+    // Send to everyone in the room (including the new user)
     socket.to(roomId).emit('user-joined', { peerId, username });
     
-    // ✅ FIX: Send rooms update to everyone
+    // Send rooms update to everyone
     io.emit('rooms-update');
   });
 
