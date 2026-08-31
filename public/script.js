@@ -52,6 +52,7 @@ let isRemoteControlActive = false;
 let remoteControlTarget = null;
 let remoteControlRequestId = null;
 let isBeingControlled = false;
+let remoteControllerId = null; // ✅ NEW: who is currently controlling ME, so I can revoke it
 let remotePointer = null;
 
 // ============================================================
@@ -315,6 +316,7 @@ function connectSocket() {
           })
         });
         isBeingControlled = true;
+        remoteControllerId = data.controllerId; // ✅ NEW: remember who, so we can revoke later
         alert('អ្នកបានអនុញ្ញាត Remote Control!');
       } else {
         fetch('/api/remote-control/reject', {
@@ -348,13 +350,16 @@ function connectSocket() {
       isRemoteControlActive = false;
       remoteControlTarget = null;
       stopRemoteControl();
+      showToast('🛑 Remote Control បានបញ្ចប់', 'info');
     }
     if (data.targetId === myId) {
       isBeingControlled = false;
+      remoteControllerId = null; // ✅ NEW
       if (remotePointer) {
         remotePointer.remove();
         remotePointer = null;
       }
+      showToast('🛑 Remote Control បានបញ្ចប់', 'info');
     }
   });
 
@@ -1378,6 +1383,30 @@ function stopRemoteControl() {
   document.removeEventListener('keydown', handleRemoteKeyboard);
 }
 
+// ✅ NEW: lets EITHER side end an active remote-control session —
+// the controller can stop controlling, or the person being controlled
+// can revoke access at any time (like AnyDesk's "stop sharing" / "X").
+function endRemoteControl() {
+  if (isRemoteControlActive && remoteControlTarget) {
+    socket.emit('remote-control-end', { controllerId: myId, targetId: remoteControlTarget });
+    isRemoteControlActive = false;
+    stopRemoteControl();
+    remoteControlTarget = null;
+    showToast('🛑 អ្នកបានបញ្ឈប់ការបញ្ជាពីចម្ងាយ', 'info');
+  } else if (isBeingControlled && remoteControllerId) {
+    socket.emit('remote-control-end', { controllerId: remoteControllerId, targetId: myId });
+    isBeingControlled = false;
+    remoteControllerId = null;
+    if (remotePointer) {
+      remotePointer.remove();
+      remotePointer = null;
+    }
+    showToast('🛑 អ្នកបានដកហូតសិទ្ធិបញ្ជាពីចម្ងាយ', 'info');
+  } else {
+    showToast('គ្មាន Remote Control កំពុងដំណើរការទេ', 'info');
+  }
+}
+
 function handleRemoteMouseMove(event) {
   if (!isRemoteControlActive || !remoteControlTarget) return;
   socket.emit('remote-mouse-move', {
@@ -1651,6 +1680,15 @@ function leaveRoom() {
   if (!confirm('តើអ្នកប្រាកដជាចង់ចាកចេញពីបន្ទប់នេះទេ?')) return;
 
   stopMeshHealthCheck();
+  stopRemoteControl(); // ✅ NEW: stop listening for remote-control input on the way out
+  isRemoteControlActive = false;
+  isBeingControlled = false;
+  remoteControlTarget = null;
+  remoteControllerId = null;
+  if (remotePointer) {
+    remotePointer.remove();
+    remotePointer = null;
+  }
 
   if (localStream) {
     localStream.getTracks().forEach(track => track.stop());
