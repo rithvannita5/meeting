@@ -32,6 +32,12 @@ let pendingLoginData = null;
 // mesh health-check can top up anyone who's missing it.
 let screenShareSentTo = {};
 let meshCheckTimer = null;
+// ✅ NEW: tracks the outgoing PeerJS calls WE created to send our screen
+// share to each peer, so we can properly .close() them when we stop
+// sharing — without this, stopping only stopped our local track, but the
+// call itself stayed open and the remote side never got a signal to
+// remove our (now-frozen) screen tile.
+let screenShareCalls = {};
 
 const localVideo = document.getElementById('localVideo');
 const screenGrid = document.getElementById('screenGrid');
@@ -222,6 +228,7 @@ function connectSocket() {
             metadata: { type: 'screen', username: myUsername }
           });
           attachIceDiagnostics(call, peerId, 'screen (outgoing, late-join)');
+          screenShareCalls[peerId] = call; // ✅ NEW: track so we can close it later
           screenShareSentTo[peerId] = true;
         }, 1000);
       }
@@ -238,6 +245,10 @@ function connectSocket() {
     if (peerCalls[peerId]) {
       peerCalls[peerId].close();
       delete peerCalls[peerId];
+    }
+    if (screenShareCalls[peerId]) { // ✅ NEW: close+forget our screen call to whoever just left
+      try { screenShareCalls[peerId].close(); } catch (e) {}
+      delete screenShareCalls[peerId];
     }
     
     delete userNamesMap[peerId];
@@ -1205,6 +1216,15 @@ async function toggleCamera() {
 
 async function toggleScreenShare() {
   if (isScreenSharing) {
+    // ✅ FIX: properly close every outgoing screen-share call so the other
+    // side gets notified and removes our tile — just stopping the local
+    // track left the call open, so the remote side kept showing our last
+    // frame forever with no way to know we'd actually stopped.
+    Object.keys(screenShareCalls).forEach(peerId => {
+      try { screenShareCalls[peerId].close(); } catch (e) {}
+    });
+    screenShareCalls = {};
+
     if (screenStream) {
       screenStream.getTracks().forEach(track => track.stop());
       screenStream = null;
@@ -1234,6 +1254,7 @@ async function toggleScreenShare() {
       screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       isScreenSharing = true;
       screenShareSentTo = {};
+      screenShareCalls = {};
       
       Object.keys(userNamesMap).forEach(peerId => {
         if (peerId !== myId && myPeer) {
@@ -1242,6 +1263,7 @@ async function toggleScreenShare() {
           });
           attachIceDiagnostics(call, peerId, 'screen (outgoing)');
           screenShareSentTo[peerId] = true;
+          screenShareCalls[peerId] = call; // ✅ NEW: track so we can close it on stop
           // Note: screen-share calls are intentionally NOT stored in
           // peerCalls, since that map is reserved for the video calls that
           // updateStreamToAllPeers()/toggleCamera() operate on.
@@ -1331,6 +1353,7 @@ function startMeshHealthCheck() {
         });
         attachIceDiagnostics(screenCall, peerId, 'screen (outgoing, mesh-heal)');
         screenShareSentTo[peerId] = true;
+        screenShareCalls[peerId] = screenCall; // ✅ NEW: track so we can close it on stop
       }
     });
   }, 4000);
@@ -1715,6 +1738,13 @@ function leaveRoom() {
     screenStream.getTracks().forEach(track => track.stop());
     screenStream = null;
   }
+  // ✅ NEW: close any outgoing screen-share calls too, not just video calls
+  Object.keys(screenShareCalls).forEach(pId => {
+    try { screenShareCalls[pId].close(); } catch (e) {}
+  });
+  screenShareCalls = {};
+  screenShareSentTo = {};
+  isScreenSharing = false;
 
   if (peerCalls) {
     Object.keys(peerCalls).forEach(pId => {
