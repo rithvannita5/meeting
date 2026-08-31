@@ -75,6 +75,36 @@ const roomUsers = {};
 const activeSockets = new Map();
 const otpStore = {};
 
+// ============================================================
+// ✅ NEW: REMOTE CONTROL STATE
+// ============================================================
+// peerId -> socketId, kept up to date on join-room/leave-room/disconnect,
+// so we can find "where do I send this event" for any peerId in O(1)
+// regardless of which room they're in.
+const peerSocketMap = new Map();
+
+// requestId -> { controllerId, controllerSocketId, targetId, targetSocketId, roomId, createdAt }
+// A pending request that hasn't been approved/rejected yet.
+const pendingRemoteRequests = new Map();
+const REMOTE_REQUEST_TTL_MS = 30000; // auto-expire an unanswered request after 30s
+
+// requestId -> { controllerId, targetId } — sessions that ARE currently
+// approved/active, so we can notify both sides cleanly if either
+// disconnects mid-session.
+const activeRemoteSessions = new Map();
+
+function endRemoteSession(requestId, reason) {
+  const session = activeRemoteSessions.get(requestId);
+  if (!session) return;
+  const { controllerId, targetId } = session;
+  const controllerSocketId = peerSocketMap.get(controllerId);
+  const targetSocketId = peerSocketMap.get(targetId);
+  const payload = { controllerId, targetId, reason: reason || 'ended' };
+  if (controllerSocketId) io.to(controllerSocketId).emit('remote-control-ended', payload);
+  if (targetSocketId) io.to(targetSocketId).emit('remote-control-ended', payload);
+  activeRemoteSessions.delete(requestId);
+}
+
 // ========== REST APIs ==========
 app.post('/api/login', async (req, res) => {
   const { username, password, roomId } = req.body;
@@ -254,6 +284,104 @@ app.get('/api/rooms', async (req, res) => {
 });
 
 // ============================================================
+// ✅ NEW: REMOTE CONTROL REST APIs
+// ============================================================
+// These three endpoints were being called by the client already, but
+// never existed on the server — that's why "Remote Control" never worked.
+
+app.post('/api/remote-control/request', (req, res) => {
+  const { controllerId, targetId, roomId } = req.body;
+
+  if (!controllerId || !targetId || !roomId) {
+    return res.status(400).json({ success: false, message: 'ព័ត៌មានមិនគ្រប់គ្រាន់!' });
+  }
+  if (controllerId === targetId) {
+    return res.status(400).json({ success: false, message: 'មិនអាចស្នើសុំបញ្ជាខ្លួនឯងបានទេ!' });
+  }
+  if (!roomUsers[roomId]) {
+    return res.status(404).json({ success: false, message: 'រកមិនឃើញបន្ទប់នេះទេ!' });
+  }
+
+  const targetUser = roomUsers[roomId].find(u => u.peerId === targetId);
+  if (!targetUser) {
+    return res.status(404).json({ success: false, message: 'អ្នកប្រើគោលដៅមិននៅក្នុងបន្ទប់នេះទេ (ប្រហែលបានចាកចេញ)!' });
+  }
+  const controllerUser = roomUsers[roomId].find(u => u.peerId === controllerId);
+
+  const requestId = 'rc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  pendingRemoteRequests.set(requestId, {
+    controllerId,
+    controllerSocketId: controllerUser ? controllerUser.socketId : peerSocketMap.get(controllerId),
+    targetId,
+    targetSocketId: targetUser.socketId,
+    roomId,
+    createdAt: Date.now()
+  });
+
+  // Auto-expire if nobody answers, so it doesn't leak memory / stay "pending" forever.
+  setTimeout(() => {
+    if (pendingRemoteRequests.has(requestId)) {
+      pendingRemoteRequests.delete(requestId);
+      console.log(`⏱️ Remote control request ${requestId} expired (no response)`);
+    }
+  }, REMOTE_REQUEST_TTL_MS);
+
+  io.to(targetUser.socketId).emit('remote-control-request', { requestId, controllerId, targetId });
+  console.log(`📡 Remote control request sent: ${controllerId} -> ${targetId} (${requestId})`);
+
+  res.json({ success: true, requestId });
+});
+
+app.post('/api/remote-control/approve', (req, res) => {
+  const { requestId, targetId } = req.body;
+  const reqData = pendingRemoteRequests.get(requestId);
+
+  if (!reqData) {
+    return res.status(404).json({ success: false, message: 'សំណើរនេះផុតកំណត់ ឬមិនមានទេ!' });
+  }
+  if (reqData.targetId !== targetId) {
+    return res.status(403).json({ success: false, message: 'អ្នកគ្មានសិទ្ធិអនុញ្ញាតសំណើរនេះទេ!' });
+  }
+
+  pendingRemoteRequests.delete(requestId);
+  activeRemoteSessions.set(requestId, { controllerId: reqData.controllerId, targetId: reqData.targetId });
+
+  const controllerSocketId = peerSocketMap.get(reqData.controllerId) || reqData.controllerSocketId;
+  if (controllerSocketId) {
+    io.to(controllerSocketId).emit('remote-control-approved', {
+      controllerId: reqData.controllerId,
+      targetId: reqData.targetId,
+      requestId
+    });
+  }
+  console.log(`✅ Remote control approved: ${reqData.controllerId} -> ${reqData.targetId} (${requestId})`);
+
+  res.json({ success: true });
+});
+
+app.post('/api/remote-control/reject', (req, res) => {
+  const { requestId } = req.body;
+  const reqData = pendingRemoteRequests.get(requestId);
+
+  if (!reqData) {
+    return res.status(404).json({ success: false, message: 'សំណើរនេះផុតកំណត់ ឬមិនមានទេ!' });
+  }
+
+  pendingRemoteRequests.delete(requestId);
+
+  const controllerSocketId = peerSocketMap.get(reqData.controllerId) || reqData.controllerSocketId;
+  if (controllerSocketId) {
+    io.to(controllerSocketId).emit('remote-control-rejected', {
+      controllerId: reqData.controllerId,
+      targetId: reqData.targetId
+    });
+  }
+  console.log(`❌ Remote control rejected: ${reqData.controllerId} -> ${reqData.targetId} (${requestId})`);
+
+  res.json({ success: true });
+});
+
+// ============================================================
 // SOCKET.IO LOGIC
 // ============================================================
 io.on('connection', (socket) => {
@@ -274,6 +402,7 @@ io.on('connection', (socket) => {
     socket.data.username = username;
 
     activeSockets.set(socket.id, { username, roomId, peerId });
+    peerSocketMap.set(peerId, socket.id); // ✅ NEW: keep peerId -> socketId fresh
 
     if (!roomUsers[roomId]) roomUsers[roomId] = [];
     roomUsers[roomId] = roomUsers[roomId].filter(u => u.peerId !== peerId);
@@ -300,6 +429,17 @@ io.on('connection', (socket) => {
       socket.to(roomId).emit('user-left', { peerId });
       if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
     }
+    if (peerId && peerSocketMap.get(peerId) === socket.id) {
+      peerSocketMap.delete(peerId); // ✅ NEW
+    }
+    // ✅ NEW: cleanly end any remote-control session this peer was part of
+    if (peerId) {
+      activeRemoteSessions.forEach((session, reqId) => {
+        if (session.controllerId === peerId || session.targetId === peerId) {
+          endRemoteSession(reqId, 'peer-left');
+        }
+      });
+    }
     socket.leave(roomId);
     activeSockets.delete(socket.id);
     io.emit('rooms-update');
@@ -321,6 +461,59 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ============================================================
+  // ✅ NEW: REMOTE CONTROL — realtime relay
+  // ============================================================
+  // The REST endpoints above handle the request/approve/reject handshake.
+  // Once approved, mouse/keyboard events are relayed here in realtime via
+  // sockets (much lower latency than REST for this).
+
+  socket.on('remote-mouse-move', (data) => {
+    const targetSocketId = peerSocketMap.get(data.targetId);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('remote-mouse-move', { x: data.x, y: data.y });
+    }
+  });
+
+  socket.on('remote-mouse-click', (data) => {
+    const targetSocketId = peerSocketMap.get(data.targetId);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('remote-mouse-click', { x: data.x, y: data.y });
+    }
+  });
+
+  socket.on('remote-keyboard', (data) => {
+    const targetSocketId = peerSocketMap.get(data.targetId);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('remote-keyboard', { key: data.key });
+    }
+  });
+
+  // Either side (the controller stopping, or the target revoking access)
+  // can end an active session.
+  socket.on('remote-control-end', (data) => {
+    const { controllerId, targetId } = data || {};
+    if (!controllerId || !targetId) return;
+
+    // find + clear the matching active session (if tracked)
+    let matchedReqId = null;
+    activeRemoteSessions.forEach((session, reqId) => {
+      if (session.controllerId === controllerId && session.targetId === targetId) {
+        matchedReqId = reqId;
+      }
+    });
+    if (matchedReqId) {
+      endRemoteSession(matchedReqId, 'manual-end');
+    } else {
+      // No tracked session (e.g. state drifted) — still notify both sides directly.
+      const controllerSocketId = peerSocketMap.get(controllerId);
+      const targetSocketId = peerSocketMap.get(targetId);
+      const payload = { controllerId, targetId, reason: 'manual-end' };
+      if (controllerSocketId) io.to(controllerSocketId).emit('remote-control-ended', payload);
+      if (targetSocketId) io.to(targetSocketId).emit('remote-control-ended', payload);
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log('🔌 Socket disconnected:', socket.id);
     activeSockets.delete(socket.id);
@@ -335,6 +528,25 @@ io.on('connection', (socket) => {
       }
       if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
     }
+
+    if (peerId) {
+      if (peerSocketMap.get(peerId) === socket.id) {
+        peerSocketMap.delete(peerId); // ✅ NEW
+      }
+      // ✅ NEW: cleanly end any remote-control session this peer was part of
+      activeRemoteSessions.forEach((session, reqId) => {
+        if (session.controllerId === peerId || session.targetId === peerId) {
+          endRemoteSession(reqId, 'peer-disconnected');
+        }
+      });
+      // also drop any pending (not-yet-approved) requests involving this peer
+      pendingRemoteRequests.forEach((reqData, reqId) => {
+        if (reqData.controllerId === peerId || reqData.targetId === peerId) {
+          pendingRemoteRequests.delete(reqId);
+        }
+      });
+    }
+
     io.emit('rooms-update');
   });
 });
