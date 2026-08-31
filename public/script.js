@@ -1212,10 +1212,23 @@ async function toggleScreenShare() {
     isScreenSharing = false;
     screenShareSentTo = {};
     showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
+
+    // ✅ FIX: previously this did `screenGridElem.innerHTML = ''`, which wiped
+    // out EVERY screen-share tile in the grid — including tiles that belong
+    // to OTHER users who are still actively sharing! That made it look like
+    // "everyone's screenshare stopped" from the clicker's own screen, even
+    // though only their own share had actually ended. We now remove ONLY
+    // our own tile (#local-screen), leaving everyone else's untouched.
+    const localScreenCard = document.getElementById('local-screen');
+    if (localScreenCard) localScreenCard.remove();
+
+    // Only hide the "screenTitle" heading if NO screen shares remain at all
+    // (matches the same check used in removeRemoteScreenVideo()).
     const screenGridElem = document.getElementById('screenGrid');
-    if (screenGridElem) screenGridElem.innerHTML = '';
     const screenTitle = document.getElementById('screenTitle');
-    if (screenTitle) screenTitle.style.display = 'none';
+    if (screenGridElem && screenGridElem.children.length === 0 && screenTitle) {
+      screenTitle.style.display = 'none';
+    }
   } else {
     try {
       screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
