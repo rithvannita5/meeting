@@ -18,6 +18,13 @@ let cameraStream = null;
 let screenStream = null;
 
 const peerCalls = {};
+// ✅ FIX: screen-share calls used to be stored in the SAME peerCalls map
+// keyed only by peerId, which meant a screen-share call would silently
+// overwrite the video call entry for that peer (or vice versa). That made
+// toggleCamera()'s replaceTrack() sometimes grab the wrong connection.
+// Keeping them in separate maps keeps camera and screen-share fully
+// independent of each other.
+const screenCalls = {};
 const userNamesMap = {};
 
 let isCameraOn = false;
@@ -159,10 +166,20 @@ function connectSocket() {
       updateUserCount();
       updateChatUserList();
       playNotificationSound('join');
-      
-      setTimeout(function() {
-        connectToUser(peerId);
-      }, 500);
+
+      // ✅ FIX (root cause of "must leave & rejoin to see new camera"):
+      // The newcomer already calls every existing user (see 'room-joined'
+      // below), and a single PeerJS call is bidirectional once answered
+      // with call.answer(localStream) - so it already carries video BOTH
+      // ways. Previously existing users ALSO called the newcomer here,
+      // creating a second, redundant RTCPeerConnection for the same pair.
+      // Both connections got stored under the same peerCalls[peerId] key,
+      // so toggleCamera()'s replaceTrack() only ever updated whichever
+      // connection happened to be stored last - a coin-flip - which is
+      // why the camera update sometimes never reached the other side
+      // until a full rejoin created a fresh single connection.
+      // We simply stop calling out here and let the incoming call from
+      // the newcomer (handled in myPeer.on('call')) carry both directions.
 
       if (isScreenSharing && screenStream && myPeer) {
         setTimeout(function() {
@@ -170,6 +187,7 @@ function connectSocket() {
             metadata: { type: 'screen', username: myUsername }
           });
           attachIceDiagnostics(call, peerId, 'screen (outgoing, late-join)');
+          screenCalls[peerId] = call;
         }, 1000);
       }
     }
@@ -719,12 +737,23 @@ function initPeerJS() {
 
     call.on('close', function() {
       console.log('Call closed with:', call.peer);
-      removeRemoteVideo(call.peer);
-      removeRemoteScreenVideo(call.peer);
-      delete peerCalls[call.peer];
+      if (type === 'screen') {
+        removeRemoteScreenVideo(call.peer);
+        delete screenCalls[call.peer];
+      } else {
+        removeRemoteVideo(call.peer);
+        delete peerCalls[call.peer];
+      }
     });
 
-    peerCalls[call.peer] = call;
+    // ✅ FIX: store in the map matching the call's actual type instead of
+    // always overwriting peerCalls[call.peer], which used to clobber the
+    // video call whenever a screen-share call came in from the same peer.
+    if (type === 'screen') {
+      screenCalls[call.peer] = call;
+    } else {
+      peerCalls[call.peer] = call;
+    }
   });
 
   myPeer.on('error', function(err) {
@@ -808,10 +837,42 @@ function initDummyStream() {
   osc.connect(dst);
   osc.start();
   const audioTrack = dst.stream.getAudioTracks()[0];
-  audioTrack.enabled = false;
+  // ✅ FIX: this used to hard-code `false` every time a dummy stream was
+  // (re)created (e.g. whenever the camera was turned off), silently
+  // resetting the mic to muted and ignoring whatever the user had
+  // actually chosen with the mic button.
+  audioTrack.enabled = isMicOn;
 
   localStream = new MediaStream([canvasStream.getVideoTracks()[0], audioTrack]);
   if (localVideo) localVideo.srcObject = localStream;
+
+  // ✅ FIX: if we already have live calls, push the new dummy tracks to
+  // them too (previously only toggleCamera's "turning ON" branch replaced
+  // tracks - turning the camera back OFF left peers frozen on your last
+  // camera frame and still hearing your real mic's replaced track).
+  replaceOutgoingTracks(localStream);
+}
+
+// ✅ FIX: shared helper so camera on/off and mic-state changes always push
+// the CURRENT local video+audio tracks to every active video call, instead
+// of only the "camera turning on" path doing a (video-track-only) replace.
+function replaceOutgoingTracks(stream) {
+  if (!stream) return;
+  const videoTrack = stream.getVideoTracks()[0];
+  const audioTrack = stream.getAudioTracks()[0];
+  Object.keys(peerCalls).forEach(pId => {
+    const call = peerCalls[pId];
+    if (!call || !call.peerConnection) return;
+    const senders = call.peerConnection.getSenders();
+    if (videoTrack) {
+      const vSender = senders.find(s => s.track && s.track.kind === 'video');
+      if (vSender) vSender.replaceTrack(videoTrack);
+    }
+    if (audioTrack) {
+      const aSender = senders.find(s => s.track && s.track.kind === 'audio');
+      if (aSender) aSender.replaceTrack(audioTrack);
+    }
+  });
 }
 
 function addRemoteVideo(peerId, username) {
@@ -907,10 +968,27 @@ function updateUserCount() {
 // MEDIA TOGGLE & SCREEN SHARE
 // ============================================================
 
+// ✅ FIX: buttons never visually reflected on/off state - the 🎤/📷 icons
+// and their red "off" background only ever showed whatever the HTML
+// started with. This keeps them in sync with the actual track state.
+function updateMediaButtonsUI() {
+  const micBtn = document.getElementById('micBtnIcon');
+  if (micBtn) {
+    micBtn.textContent = isMicOn ? '🎤' : '🔇';
+    micBtn.classList.toggle('off', !isMicOn);
+  }
+  const camBtn = document.getElementById('camBtnIcon');
+  if (camBtn) {
+    camBtn.textContent = isCameraOn ? '📹' : '🚫';
+    camBtn.classList.toggle('off', !isCameraOn);
+  }
+}
+
 function toggleMic() {
   if (!localStream) return;
   isMicOn = !isMicOn;
   localStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
+  updateMediaButtonsUI();
   showToast(isMicOn ? '🎤 បានបើក Mic' : '🎙️❌ បានបិទ Mic', 'info');
 }
 
@@ -921,21 +999,32 @@ async function toggleCamera() {
       cameraStream = null;
     }
     isCameraOn = false;
+    // initDummyStream() sets localStream and, via replaceOutgoingTracks(),
+    // pushes the placeholder video + your current mic state to every peer
+    // - ✅ FIX: previously nothing was pushed here, so peers stayed frozen
+    // on your last camera frame after you turned the camera off.
     initDummyStream();
+    updateMediaButtonsUI();
     showToast('📷 បានបិទកាមេរ៉ា', 'info');
   } else {
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       isCameraOn = true;
       if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
+
+      // ✅ FIX: respect the user's existing mic on/off choice instead of
+      // always sending live mic audio the instant the camera turns on.
+      cameraStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
+
       localStream = cameraStream;
       if (localVideo) localVideo.srcObject = localStream;
-      
-      Object.keys(peerCalls).forEach(pId => {
-        const videoTrack = localStream.getVideoTracks()[0];
-        const sender = peerCalls[pId].peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-        if (sender) sender.replaceTrack(videoTrack);
-      });
+
+      // ✅ FIX: previously only the VIDEO sender was replaced, so peers
+      // never actually received your real microphone audio - they kept
+      // hearing the silent placeholder track forever.
+      replaceOutgoingTracks(localStream);
+
+      updateMediaButtonsUI();
       showToast('📷 បានបើកកាមេរ៉ា', 'success');
     } catch (err) {
       showToast('❌ មិនអាចបើកកាមេរ៉ាបានទេ!', 'error');
@@ -945,6 +1034,14 @@ async function toggleCamera() {
 
 async function toggleScreenShare() {
   if (isScreenSharing) {
+    // ✅ FIX: explicitly close the screen-share calls instead of only
+    // stopping the local tracks. Stopping the track eventually ends the
+    // connection, but closing the call immediately tells every viewer
+    // right away and reliably removes their screen-share tile.
+    Object.keys(screenCalls).forEach(pId => {
+      if (screenCalls[pId]) screenCalls[pId].close();
+      delete screenCalls[pId];
+    });
     if (screenStream) {
       screenStream.getTracks().forEach(track => track.stop());
       screenStream = null;
@@ -962,10 +1059,15 @@ async function toggleScreenShare() {
             metadata: { type: 'screen', username: myUsername }
           });
           attachIceDiagnostics(call, peerId, 'screen (outgoing)');
+          screenCalls[peerId] = call;
         }
       });
       
       screenStream.getVideoTracks()[0].onended = () => {
+        Object.keys(screenCalls).forEach(pId => {
+          if (screenCalls[pId]) screenCalls[pId].close();
+          delete screenCalls[pId];
+        });
         isScreenSharing = false;
         showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
       };
@@ -1229,6 +1331,15 @@ function finalizeLogin(data) {
     if (adminDash) adminDash.classList.remove('hidden');
     const adminRoleDisplay = document.getElementById('adminRoleDisplay');
     if (adminRoleDisplay) adminRoleDisplay.textContent = currentUserRole.toUpperCase();
+
+    // ✅ FIX: this button had display:none in the HTML and nothing ever
+    // un-hid it after login, so it permanently disappeared for every admin.
+    // Only full admins (not supervisors) can create users/rooms.
+    const tabBtnNewRoom = document.getElementById('tabBtnNewRoom');
+    if (tabBtnNewRoom) {
+      tabBtnNewRoom.style.display = (currentUserRole === 'admin') ? 'inline-block' : 'none';
+    }
+
     switchAdminTab('rooms');
   } else {
     startMeeting();
@@ -1287,6 +1398,14 @@ function leaveRoom() {
   if (peerCalls) {
     Object.keys(peerCalls).forEach(pId => {
       if (peerCalls[pId]) peerCalls[pId].close();
+    });
+  }
+  // ✅ FIX: screen-share calls live in their own map now and were never
+  // closed on leave, potentially leaving stale connections/tiles behind.
+  if (screenCalls) {
+    Object.keys(screenCalls).forEach(pId => {
+      if (screenCalls[pId]) screenCalls[pId].close();
+      delete screenCalls[pId];
     });
   }
   if (myPeer) {
