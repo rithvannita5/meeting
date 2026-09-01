@@ -1536,6 +1536,10 @@ function switchAdminTab(tab) {
     }
     var tabBtnNewRoom = document.getElementById('tabBtnNewRoom');
     if (tabBtnNewRoom) tabBtnNewRoom.classList.add('active');
+    // ✅ FIX: make sure the room dropdown is fresh every time this tab is
+    // opened (e.g. a room created in a previous visit should show up here
+    // without needing a full page reload).
+    loadRooms();
   }
 }
 
@@ -1544,14 +1548,104 @@ async function loadRooms() {
     var res = await fetch('/api/rooms');
     var data = await res.json();
     allRoomsList = data.rooms;
+
+    var optionsHtml = '';
+    data.rooms.forEach(function(r) {
+      optionsHtml += '<option value="' + r + '">' + r + '</option>';
+    });
+
     var select = document.getElementById('roomSelect');
-    if (select) {
-      select.innerHTML = '';
-      data.rooms.forEach(function(r) {
-        select.innerHTML += '<option value="' + r + '">' + r + '</option>';
-      });
-    }
+    if (select) select.innerHTML = optionsHtml;
+
+    // ✅ FIX: this combobox (room picker in the admin "create new user" form)
+    // was never populated anywhere - it stayed permanently empty, so admins
+    // had no room to assign a new user to.
+    var userRoomSelect = document.getElementById('userAssignedRoomSelect');
+    if (userRoomSelect) userRoomSelect.innerHTML = optionsHtml;
   } catch (err) {}
+}
+
+// ✅ FIX: "បង្កើត User" button called this function, but it never existed
+// in script.js at all - the onclick handler silently failed (console
+// showed "createNewUser is not defined"), so nothing ever happened.
+async function createNewUser() {
+  var usernameInput = document.getElementById('newUsername');
+  var passwordInput = document.getElementById('newPassword');
+  var roomSelectEl = document.getElementById('userAssignedRoomSelect');
+  var roleSelectEl = document.getElementById('newUserRoleSelect');
+
+  var username = usernameInput ? usernameInput.value.trim() : '';
+  var password = passwordInput ? passwordInput.value.trim() : '';
+  var assignedRoom = roomSelectEl ? roomSelectEl.value : '';
+  var role = roleSelectEl ? roleSelectEl.value : 'user';
+
+  if (!username || !password) {
+    return showToast('សូមបំពេញ Username និង Password!', 'error');
+  }
+  if (!assignedRoom) {
+    return showToast('សូមជ្រើសរើសបន្ទប់សម្រាប់ User នេះ! (សូមបង្កើតបន្ទប់ជាមុនសិន ប្រសិនបើមិនទាន់មាន)', 'error');
+  }
+
+  try {
+    var res = await fetch('/api/create-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password, assignedRoom: assignedRoom, role: role })
+    });
+    var data = await res.json();
+
+    if (!res.ok || !data.success) {
+      return showToast(data.message || '❌ បង្កើត User មិនបានសម្រេច!', 'error');
+    }
+
+    showToast(data.message || '✅ បង្កើត User ជោគជ័យ!', 'success');
+    if (usernameInput) usernameInput.value = '';
+    if (passwordInput) passwordInput.value = '';
+
+    var tabUsers = document.getElementById('tab-users');
+    if (tabUsers && !tabUsers.classList.contains('hidden')) {
+      loadUsersTable();
+    }
+  } catch (err) {
+    showToast('❌ មានបញ្ហាក្នុងការភ្ជាប់ទៅ Server!', 'error');
+  }
+}
+
+// ✅ FIX: same problem as createNewUser() above - "បង្កើតបន្ទប់" button
+// called a function that never existed in script.js.
+async function createNewRoom() {
+  var roomIdInput = document.getElementById('newRoomId');
+  var roomId = roomIdInput ? roomIdInput.value.trim() : '';
+
+  if (!roomId) {
+    return showToast('សូមបញ្ចូលឈ្មោះបន្ទប់!', 'error');
+  }
+
+  try {
+    var res = await fetch('/api/create-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId: roomId })
+    });
+    var data = await res.json();
+
+    if (!res.ok || !data.success) {
+      return showToast(data.message || '❌ បង្កើតបន្ទប់មិនបានសម្រេច!', 'error');
+    }
+
+    showToast(data.message || '✅ បង្កើតបន្ទប់ជោគជ័យ!', 'success');
+    if (roomIdInput) roomIdInput.value = '';
+
+    // Refresh every dropdown/monitor that depends on the room list so the
+    // new room shows up immediately without a page reload.
+    loadRooms();
+    var tabRooms = document.getElementById('tab-rooms');
+    if (tabRooms && !tabRooms.classList.contains('hidden')) {
+      loadAdminRoomMonitor();
+    }
+  } catch (err) {
+    showToast('❌ មានបញ្ហាក្នុងការភ្ជាប់ទៅ Server!', 'error');
+  }
 }
 
 async function loadAdminRoomMonitor() {
