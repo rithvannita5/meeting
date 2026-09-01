@@ -707,6 +707,12 @@
     </div>
   </div>
 
-  <script src="/script.js"></script>
+  <!-- ✅ FIX: bump ?v= every time script.js is redeployed. Without a
+       version query string, browsers (especially on repeat visits / tabs
+       left open across a deploy) can keep serving a STALE cached copy of
+       script.js indefinitely - e.g. a participant already in the room
+       running old code with the placeholder-audio bug, still audible to
+       everyone else, even though the server already has the fixed file. -->
+  <script src="/script.js?v=4"></script>
 </body>
 </html>
