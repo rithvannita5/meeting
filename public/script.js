@@ -837,11 +837,16 @@ function initDummyStream() {
   osc.connect(dst);
   osc.start();
   const audioTrack = dst.stream.getAudioTracks()[0];
-  // ✅ FIX: this used to hard-code `false` every time a dummy stream was
-  // (re)created (e.g. whenever the camera was turned off), silently
-  // resetting the mic to muted and ignoring whatever the user had
-  // actually chosen with the mic button.
-  audioTrack.enabled = isMicOn;
+  // ✅ FIX: this is a SYNTHETIC placeholder tone (an oscillator), not real
+  // microphone audio - it must always stay muted/disabled no matter what
+  // isMicOn is set to. An earlier fix mistakenly tied this to isMicOn
+  // (which defaults to true), so the moment anyone joined a room before
+  // turning their camera on, everyone else heard a continuous beep until
+  // that person happened to click the mic button. The mic button only
+  // controls REAL microphone audio once the camera/mic is actually on
+  // (see toggleMic() and toggleCamera() below) — it has nothing to mute
+  // here because there is no real audio yet.
+  audioTrack.enabled = false;
 
   localStream = new MediaStream([canvasStream.getVideoTracks()[0], audioTrack]);
   if (localVideo) localVideo.srcObject = localStream;
@@ -985,9 +990,16 @@ function updateMediaButtonsUI() {
 }
 
 function toggleMic() {
-  if (!localStream) return;
   isMicOn = !isMicOn;
-  localStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
+  // ✅ FIX: only touch the actual audio track when we have a REAL
+  // microphone (camera on). Before the camera is turned on, localStream
+  // is the silent placeholder (see initDummyStream) which must stay
+  // muted regardless of this button - there's no real mic to toggle yet.
+  // isMicOn is still remembered and gets applied automatically the moment
+  // the camera/mic turns on (see toggleCamera()).
+  if (isCameraOn && localStream) {
+    localStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
+  }
   updateMediaButtonsUI();
   showToast(isMicOn ? '🎤 បានបើក Mic' : '🎙️❌ បានបិទ Mic', 'info');
 }
@@ -1047,11 +1059,20 @@ async function toggleScreenShare() {
       screenStream = null;
     }
     isScreenSharing = false;
+    // ✅ FIX: the sharer never saw their own screen-share tile at all
+    // (addRemoteScreenVideo was only ever called for OTHER people's
+    // streams) - remove our own self-preview tile now that sharing stopped.
+    removeRemoteScreenVideo(myId);
     showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
   } else {
     try {
       screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       isScreenSharing = true;
+
+      // ✅ FIX: show a self-preview tile immediately, the same way Discord
+      // shows you your own share - previously nothing was ever rendered
+      // locally for the person doing the sharing.
+      addRemoteScreenVideo(myId, screenStream, myUsername + ' (អ្នក)');
       
       Object.keys(userNamesMap).forEach(peerId => {
         if (peerId !== myId && myPeer) {
@@ -1069,6 +1090,7 @@ async function toggleScreenShare() {
           delete screenCalls[pId];
         });
         isScreenSharing = false;
+        removeRemoteScreenVideo(myId);
         showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
       };
       
