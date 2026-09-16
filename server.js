@@ -26,7 +26,7 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
     credentials: true
   },
-  transports: ['polling'],  // ប្រើ Polling តែប៉ុណ្ណោះ
+  transports: ['polling'],
   allowUpgrades: false,
   pingTimeout: 60000,
   pingInterval: 25000,
@@ -43,9 +43,32 @@ io.engine.on("connection_error", (err) => {
 // ========== Base Routes ==========
 app.get('/ping', (req, res) => res.send('pong'));
 
+// ========== PWA Routes ==========
+app.get('/manifest.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.sendFile(path.join(__dirname, 'public', 'manifest.json'));
+});
+
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+});
+
+// ✅ Favicon - inline SVG
+app.get('/favicon.ico', (req, res) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+    <rect width="64" height="64" rx="14" fill="#00b4d8"/>
+    <text x="32" y="44" font-family="Arial" font-size="36" font-weight="bold" fill="white" text-anchor="middle">VC</text>
+  </svg>`;
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(svg);
+});
+
 // ========== MongoDB Atlas Config ==========
-// ⚠️ សូមប្តូរ Password Database ជាបន្ទាន់ ហើយដាក់តម្លៃថ្មីនៅក្នុង Environment
-// Variable MONGO_URI នៅលើ Render (កុំដាក់ hardcode ក្នុង code ទៀត)
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) {
   console.error('❌ MONGO_URI environment variable មិនត្រូវបានកំណត់ទេ! សូមកំណត់វានៅក្នុង Render Environment Variables.');
@@ -106,15 +129,12 @@ app.post('/api/login', async (req, res) => {
       return res.status(403).json({ success: false, message: `អ្នកគ្មានសិទ្ធិចូលបន្ទប់ ${roomId} ទេ!` });
     }
 
-    // ✅ FIX: ត្រួតពិនិត្យ socket ថាមានវត្តមានពិតប្រាកដ (មិនមែន ghost session ដែលចាស់ជាប់
-    // ក្នុង Map ដោយសារ disconnect មិនស្អាត) មុននឹងចាត់ទុកថា user កំពុង Online នៅ device ផ្សេង
     let onlineSockets = [];
     for (let [sId, data] of activeSockets.entries()) {
       if (data.username === username) {
         if (io.sockets.sockets.has(sId)) {
           onlineSockets.push(sId);
         } else {
-          // socket នេះលែងមានវត្តមានក្នុង io ទៀតហើយ (ghost) - លុបចោល
           activeSockets.delete(sId);
         }
       }
@@ -370,7 +390,7 @@ app.post('/api/remote-control/end', async (req, res) => {
   }
 });
 
-// ========== Socket.io Logic - FIXED ==========
+// ========== Socket.io Logic ==========
 io.on('connection', (socket) => {
   console.log('🔌 Socket connected:', socket.id);
 
@@ -406,12 +426,10 @@ io.on('connection', (socket) => {
     const existingUsers = [...roomUsers[roomId]];
     roomUsers[roomId].push({ socketId: socket.id, peerId, username });
 
-    // ផ្ញើអ្នកប្រើដែលមានរួចហើយ
     const existingUsersData = existingUsers.map(u => ({ peerId: u.peerId, username: u.username }));
     socket.emit('room-joined', { roomId, existingUsers: existingUsersData });
     socket.emit('existing-users', existingUsersData);
     
-    // ជូនដំណឹងដល់អ្នកដទៃ
     socket.to(roomId).emit('user-joined', { peerId, username });
     io.to(roomId).emit('play-sound', 'join');
     io.emit('rooms-update');
@@ -430,8 +448,6 @@ io.on('connection', (socket) => {
       if (roomUsers[roomId].length === 0) delete roomUsers[roomId];
     }
     socket.leave(roomId);
-    // ✅ FIX: លុប socket ចេញពី activeSockets ភ្លាមៗពេល leave-room
-    // ដើម្បីកុំឲ្យ 2FA logic គិតថា user នេះនៅ Online
     activeSockets.delete(socket.id);
     io.emit('rooms-update');
   });
@@ -454,7 +470,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Remote Control Events
   socket.on('remote-mouse-move', ({ targetId, x, y }) => {
     const roomId = socket.data.roomId;
     if (roomId && roomUsers[roomId]) {
@@ -498,8 +513,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// ✅ FIX: សម្អាត ghost entries ក្នុង activeSockets ជាទៀងទាត់
-// (ករណី socket ដាច់ដោយមិន fire disconnect event ស្អាត - Render/network glitch)
 setInterval(() => {
   for (let [sId] of activeSockets.entries()) {
     if (!io.sockets.sockets.has(sId)) {
@@ -508,7 +521,6 @@ setInterval(() => {
   }
 }, 30000);
 
-// Keep-alive for Render
 setInterval(() => {
   const https = require('https');
   const hostname = process.env.RENDER_EXTERNAL_HOSTNAME || 'meeting-mu6x.onrender.com';
@@ -520,4 +532,5 @@ server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`✅ Socket.IO using polling transport only`);
   console.log(`✅ PeerJS Server running on /peerjs`);
+  console.log(`✅ PWA routes ready (/manifest.json, /sw.js)`);
 });
