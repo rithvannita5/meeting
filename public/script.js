@@ -1676,3 +1676,98 @@ window.addEventListener('DOMContentLoaded', function() {
   connectSocket();
   loadRooms();
 });
+// ============================================================
+// PWA - SERVICE WORKER & INSTALL PROMPT
+// ============================================================
+
+// Register Service Worker
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('/sw.js')
+      .then(function(registration) {
+        console.log('✅ ServiceWorker registered:', registration.scope);
+      })
+      .catch(function(error) {
+        console.log('❌ ServiceWorker registration failed:', error);
+      });
+  });
+}
+
+// Install Prompt
+let deferredPrompt = null;
+
+window.addEventListener('beforeinstallprompt', function(e) {
+  e.preventDefault();
+  deferredPrompt = e;
+  console.log('✅ Install prompt available');
+  showInstallButton();
+});
+
+window.addEventListener('appinstalled', function() {
+  console.log('✅ App installed successfully');
+  hideInstallButton();
+  showToast('✅ កម្មវិធីត្រូវបាន Install ជោគជ័យ!', 'success');
+});
+
+function showInstallButton() {
+  // ពិនិត្យបើ Button មានហើយ
+  let installBtn = document.getElementById('pwaInstallBtn');
+  if (installBtn) {
+    installBtn.style.display = 'inline-block';
+    return;
+  }
+  
+  // បង្កើត Button ថ្មី
+  installBtn = document.createElement('button');
+  installBtn.id = 'pwaInstallBtn';
+  installBtn.className = 'btn-success';
+  installBtn.style.cssText = 'padding: 8px 15px; font-size: 13px; margin-right: 10px;';
+  installBtn.innerHTML = '📲 Install App';
+  installBtn.onclick = function() {
+    installApp();
+  };
+  
+  // បន្ថែមទៅ Header
+  const headerBar = document.querySelector('.header-bar .top-actions');
+  if (headerBar) {
+    headerBar.prepend(installBtn);
+  }
+  
+  // ឬបន្ថែមទៅ Login Card
+  const authCard = document.querySelector('#auth');
+  if (authCard && !headerBar) {
+    installBtn.style.cssText = 'padding: 10px; font-size: 14px; width: 100%; margin-top: 10px;';
+    authCard.appendChild(installBtn);
+  }
+}
+
+function hideInstallButton() {
+  const installBtn = document.getElementById('pwaInstallBtn');
+  if (installBtn) {
+    installBtn.style.display = 'none';
+  }
+}
+
+function installApp() {
+  if (!deferredPrompt) {
+    showToast('⚠️ មិនអាច Install បានទេ - សូមប្រើ Chrome ឬ Edge!', 'warning');
+    return;
+  }
+  
+  deferredPrompt.prompt();
+  deferredPrompt.userChoice.then(function(choiceResult) {
+    if (choiceResult.outcome === 'accepted') {
+      console.log('✅ User accepted install');
+      hideInstallButton();
+    } else {
+      console.log('❌ User dismissed install');
+    }
+    deferredPrompt = null;
+  });
+}
+
+// ពិនិត្យបើ App កំពុងដំណើរការជា Standalone (Installed)
+if (window.matchMedia('(display-mode: standalone)').matches || 
+    window.navigator.standalone === true) {
+  console.log('✅ App is running in standalone mode (installed)');
+}
