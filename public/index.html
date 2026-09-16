@@ -3,6 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+  
+  <!-- ✅ PWA Meta Tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="VCMeeting">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#00b4d8">
+  <meta name="msapplication-TileColor" content="#0b132b">
+  
+  <!-- ✅ PWA Manifest -->
+  <link rel="manifest" href="/manifest.json">
+  
+  <!-- ✅ Favicon (inline SVG) -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2300b4d8'/%3E%3Ctext x='32' y='44' font-family='Arial' font-size='36' font-weight='bold' fill='white' text-anchor='middle'%3EVC%3C/text%3E%3C/svg%3E" type="image/svg+xml">
+  
   <title>ប្រព័ន្ធ Video Conference សុវត្ថិភាព</title>
   
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -604,6 +619,9 @@
       <h2>🛠️ ផ្ទាំងបញ្ជាគ្រប់គ្រង</h2>
       <div>
         <span style="margin-right:15px; color:#48cae4;">👤 Role: <strong id="adminRoleDisplay">admin</strong></span>
+        <button id="pwaInstallBtn" class="btn-success" style="display:none; padding:8px 15px; font-size:13px; margin-right:10px;">
+          📲 Install App
+        </button>
         <button class="btn-danger" onclick="logoutAdmin()">🚪 ចាកចេញ (Logout)</button>
       </div>
     </div>
@@ -675,22 +693,17 @@
     </div>
   </div>
 
-  <!-- ============================================================
-       CHAT PANEL - MESSENGER STYLE (UPDATED)
-       ============================================================ -->
   <div id="chat-panel" class="hidden">
     <div class="chat-panel-header">
       <h3>💬 សារសម្ងាត់</h3>
       <button class="close-chat-btn" onclick="toggleChat()">✕</button>
     </div>
     <div class="chat-body">
-      <!-- User List -->
       <div id="chatUserList" class="chat-user-list">
         <div style="padding:10px 12px; color:#666; font-size:12px; border-bottom:1px solid #1a1a3e;">
           អ្នកប្រើក្នុងបន្ទប់
         </div>
       </div>
-      <!-- Messages Container -->
       <div id="chatMessagesContainer" class="chat-messages-container">
         <div class="chat-title">
           <button class="back-btn" onclick="showChatUserList()">←</button>
@@ -707,12 +720,6 @@
     </div>
   </div>
 
-  <!-- ✅ FIX: bump ?v= every time script.js is redeployed. Without a
-       version query string, browsers (especially on repeat visits / tabs
-       left open across a deploy) can keep serving a STALE cached copy of
-       script.js indefinitely - e.g. a participant already in the room
-       running old code with the placeholder-audio bug, still audible to
-       everyone else, even though the server already has the fixed file. -->
-  <script src="/script.js?v=4"></script>
+  <script src="/script.js?v=5"></script>
 </body>
 </html>
