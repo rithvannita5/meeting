@@ -1,5 +1,5 @@
 // Service Worker for PWA
-const CACHE_NAME = 'vcm-cache-v2';
+const CACHE_NAME = 'vcm-cache-v1';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -7,31 +7,30 @@ const urlsToCache = [
 ];
 
 // Install event
-self.addEventListener('install', (event) => {
-  console.log('[Service Worker] Install');
+self.addEventListener('install', function(event) {
+  console.log('[SW] Installing...');
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('[Service Worker] Caching app shell');
+      .then(function(cache) {
+        console.log('[SW] Caching app shell');
         return cache.addAll(urlsToCache);
       })
-      .catch((err) => {
-        console.log('[Service Worker] Cache addAll failed:', err);
+      .catch(function(err) {
+        console.log('[SW] Cache failed:', err);
       })
   );
   self.skipWaiting();
 });
 
 // Activate event
-self.addEventListener('activate', (event) => {
-  console.log('[Service Worker] Activate');
-  const cacheWhitelist = [CACHE_NAME];
+self.addEventListener('activate', function(event) {
+  console.log('[SW] Activating...');
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
+    caches.keys().then(function(cacheNames) {
       return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheWhitelist.indexOf(cacheName) === -1) {
-            console.log('[Service Worker] Deleting old cache:', cacheName);
+        cacheNames.map(function(cacheName) {
+          if (cacheName !== CACHE_NAME) {
+            console.log('[SW] Deleting old cache:', cacheName);
             return caches.delete(cacheName);
           }
         })
@@ -41,48 +40,32 @@ self.addEventListener('activate', (event) => {
   return self.clients.claim();
 });
 
-// Fetch event - Network first with cache fallback
-self.addEventListener('fetch', (event) => {
-  // Skip cross-origin requests
-  if (!event.request.url.startsWith(self.location.origin)) {
-    return;
-  }
-  
-  // Skip socket.io and peerjs requests
-  if (event.request.url.includes('/socket.io/') || 
-      event.request.url.includes('/peerjs/')) {
+// Fetch event
+self.addEventListener('fetch', function(event) {
+  // Skip cross-origin, socket.io, peerjs
+  if (!event.request.url.startsWith(self.location.origin) ||
+      event.request.url.includes('/socket.io/') ||
+      event.request.url.includes('/peerjs/') ||
+      event.request.url.includes('/api/')) {
     return;
   }
 
   event.respondWith(
     fetch(event.request)
-      .then((response) => {
-        // Only cache successful responses
+      .then(function(response) {
         if (response && response.status === 200) {
           const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
+          caches.open(CACHE_NAME).then(function(cache) {
             cache.put(event.request, responseClone);
           });
         }
         return response;
       })
-      .catch(() => {
-        // Try to serve from cache
-        return caches.match(event.request)
-          .then((cachedResponse) => {
-            if (cachedResponse) {
-              return cachedResponse;
-            }
-            // Fallback for offline
-            return caches.match('/');
-          });
+      .catch(function() {
+        return caches.match(event.request).then(function(cachedResponse) {
+          if (cachedResponse) return cachedResponse;
+          return caches.match('/');
+        });
       })
   );
-});
-
-// Handle messages from client
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
-  }
 });
