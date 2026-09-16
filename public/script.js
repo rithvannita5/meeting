@@ -18,12 +18,6 @@ let cameraStream = null;
 let screenStream = null;
 
 const peerCalls = {};
-// ✅ FIX: screen-share calls used to be stored in the SAME peerCalls map
-// keyed only by peerId, which meant a screen-share call would silently
-// overwrite the video call entry for that peer (or vice versa). That made
-// toggleCamera()'s replaceTrack() sometimes grab the wrong connection.
-// Keeping them in separate maps keeps camera and screen-share fully
-// independent of each other.
 const screenCalls = {};
 const userNamesMap = {};
 
@@ -55,37 +49,42 @@ let remoteControlRequestId = null;
 let isBeingControlled = false;
 let remotePointer = null;
 
-// ✅ FIX: TURN server list defined once so it can be reused / extended easily.
-// openrelay.metered.ca is a free shared TURN server and can be unreliable when
-// two peers are on very different networks (mobile data vs office firewall,
-// different countries, etc). If screen share keeps showing a black box for
-// specific network combinations, replace/add credentials from your own TURN
-// provider (e.g. Metered.ca free tier, Cloudflare Calls TURN, Twilio NTS).
+// ============================================================
+// ICE SERVERS - TURN SERVER CONFIGURATION (Metered.ca)
+// ============================================================
 const ICE_SERVERS = [
+  // STUN Servers
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
+  
+  // ✅ TURN Servers ផ្ទាល់ខ្លួនពី Metered.ca
   {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    urls: 'turn:standard.relay.metered.ca:80',
+    username: '4bef95508098c009134b8a53',
+    credential: 'oZ6Fntr2OoSANLPn'
   },
   {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    urls: 'turn:standard.relay.metered.ca:80?transport=tcp',
+    username: '4bef95508098c009134b8a53',
+    credential: 'oZ6Fntr2OoSANLPn'
   },
   {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    urls: 'turn:standard.relay.metered.ca:443',
+    username: '4bef95508098c009134b8a53',
+    credential: 'oZ6Fntr2OoSANLPn'
+  },
+  {
+    urls: 'turns:standard.relay.metered.ca:443?transport=tcp',
+    username: '4bef95508098c009134b8a53',
+    credential: 'oZ6Fntr2OoSANLPn'
   }
 ];
 
 // ============================================================
-// SOCKET CONNECTION FUNCTION - FIXED
+// SOCKET CONNECTION FUNCTION
 // ============================================================
 function connectSocket() {
   socket = io({
@@ -137,12 +136,29 @@ function connectSocket() {
       }, 2000);
     }
   });
+
   // ========== Socket Events ==========
   socket.on('room-joined', function(data) {
     console.log('🏠 Joined room:', data.roomId);
     if (data.existingUsers) {
       data.existingUsers.forEach(function(user) {
         if (user.peerId !== myId) {
+          userNamesMap[user.peerId] = user.username;
+          addRemoteVideo(user.peerId, user.username);
+          setTimeout(function() {
+            connectToUser(user.peerId);
+          }, 500);
+        }
+      });
+      updateUserCount();
+      updateChatUserList();
+    }
+  });
+
+  socket.on('existing-users', function(users) {
+    if (users && users.length > 0) {
+      users.forEach(function(user) {
+        if (user.peerId !== myId && !peerCalls[user.peerId]) {
           userNamesMap[user.peerId] = user.username;
           addRemoteVideo(user.peerId, user.username);
           setTimeout(function() {
@@ -167,20 +183,6 @@ function connectSocket() {
       updateChatUserList();
       playNotificationSound('join');
 
-      // ✅ FIX (root cause of "must leave & rejoin to see new camera"):
-      // The newcomer already calls every existing user (see 'room-joined'
-      // below), and a single PeerJS call is bidirectional once answered
-      // with call.answer(localStream) - so it already carries video BOTH
-      // ways. Previously existing users ALSO called the newcomer here,
-      // creating a second, redundant RTCPeerConnection for the same pair.
-      // Both connections got stored under the same peerCalls[peerId] key,
-      // so toggleCamera()'s replaceTrack() only ever updated whichever
-      // connection happened to be stored last - a coin-flip - which is
-      // why the camera update sometimes never reached the other side
-      // until a full rejoin created a fresh single connection.
-      // We simply stop calling out here and let the incoming call from
-      // the newcomer (handled in myPeer.on('call')) carry both directions.
-
       if (isScreenSharing && screenStream && myPeer) {
         setTimeout(function() {
           const call = myPeer.call(peerId, screenStream, {
@@ -203,6 +205,10 @@ function connectSocket() {
     if (peerCalls[peerId]) {
       peerCalls[peerId].close();
       delete peerCalls[peerId];
+    }
+    if (screenCalls[peerId]) {
+      screenCalls[peerId].close();
+      delete screenCalls[peerId];
     }
     
     delete userNamesMap[peerId];
@@ -656,9 +662,6 @@ function showChatNotification(username, message, peerId) {
 // PEERJS & WEBRTC FUNCTIONS
 // ============================================================
 
-// ✅ FIX: helper to log ICE connection state per-call, so black-screen /
-// cross-network failures show up clearly in the browser console instead of
-// failing silently.
 function attachIceDiagnostics(call, peerId, label) {
   if (!call || !call.peerConnection) return;
   call.peerConnection.oniceconnectionstatechange = function() {
@@ -672,16 +675,6 @@ function attachIceDiagnostics(call, peerId, label) {
 }
 
 function initPeerJS() {
-  // ✅ FIX (root cause of "screen share not showing" + "network problem" toast):
-  // Previously `new Peer(undefined, {...})` had no host/path, so the PeerJS
-  // client fell back to the PUBLIC PeerJS cloud broker (0.peerjs.com) for
-  // signaling — completely ignoring the PeerServer you already run on Render
-  // at app.use('/peerjs', peerServer). The public broker is not meant for
-  // production, is rate-limited, and is frequently slow/unreachable from
-  // cloud hosts like Render — so myPeer.on('open') never fires reliably,
-  // 'join-room' never gets sent with a real peerId, and calls (incl. the
-  // screen-share call) silently never connect. Pointing the client at your
-  // own Render-hosted PeerServer fixes signaling reliability.
   const isSecure = window.location.protocol === 'https:';
   myPeer = new Peer(undefined, {
     host: window.location.hostname,
@@ -746,9 +739,6 @@ function initPeerJS() {
       }
     });
 
-    // ✅ FIX: store in the map matching the call's actual type instead of
-    // always overwriting peerCalls[call.peer], which used to clobber the
-    // video call whenever a screen-share call came in from the same peer.
     if (type === 'screen') {
       screenCalls[call.peer] = call;
     } else {
@@ -837,30 +827,14 @@ function initDummyStream() {
   osc.connect(dst);
   osc.start();
   const audioTrack = dst.stream.getAudioTracks()[0];
-  // ✅ FIX: this is a SYNTHETIC placeholder tone (an oscillator), not real
-  // microphone audio - it must always stay muted/disabled no matter what
-  // isMicOn is set to. An earlier fix mistakenly tied this to isMicOn
-  // (which defaults to true), so the moment anyone joined a room before
-  // turning their camera on, everyone else heard a continuous beep until
-  // that person happened to click the mic button. The mic button only
-  // controls REAL microphone audio once the camera/mic is actually on
-  // (see toggleMic() and toggleCamera() below) — it has nothing to mute
-  // here because there is no real audio yet.
   audioTrack.enabled = false;
 
   localStream = new MediaStream([canvasStream.getVideoTracks()[0], audioTrack]);
   if (localVideo) localVideo.srcObject = localStream;
 
-  // ✅ FIX: if we already have live calls, push the new dummy tracks to
-  // them too (previously only toggleCamera's "turning ON" branch replaced
-  // tracks - turning the camera back OFF left peers frozen on your last
-  // camera frame and still hearing your real mic's replaced track).
   replaceOutgoingTracks(localStream);
 }
 
-// ✅ FIX: shared helper so camera on/off and mic-state changes always push
-// the CURRENT local video+audio tracks to every active video call, instead
-// of only the "camera turning on" path doing a (video-track-only) replace.
 function replaceOutgoingTracks(stream) {
   if (!stream) return;
   const videoTrack = stream.getVideoTracks()[0];
@@ -898,8 +872,6 @@ function attachRemoteStream(peerId, stream) {
   const videoElem = document.getElementById('stream-' + peerId);
   if (videoElem) {
     videoElem.srcObject = stream;
-    // ✅ FIX: explicitly call play() and catch autoplay-block errors instead
-    // of failing silently (would otherwise show a frozen/black frame).
     const playPromise = videoElem.play();
     if (playPromise && playPromise.catch) {
       playPromise.catch(function(err) {
@@ -924,10 +896,6 @@ function addRemoteScreenVideo(peerId, stream, username) {
   const video = document.createElement('video');
   video.autoplay = true;
   video.playsInline = true;
-  // ✅ FIX: screen-share streams normally carry no audio track, so muting is
-  // safe and required — most browsers (esp. Chrome) block autoplay of
-  // non-muted <video> elements without a prior user gesture, which is the
-  // main reason the tile showed a black box instead of the shared screen.
   video.muted = true;
   video.srcObject = stream;
 
@@ -973,9 +941,6 @@ function updateUserCount() {
 // MEDIA TOGGLE & SCREEN SHARE
 // ============================================================
 
-// ✅ FIX: buttons never visually reflected on/off state - the 🎤/📷 icons
-// and their red "off" background only ever showed whatever the HTML
-// started with. This keeps them in sync with the actual track state.
 function updateMediaButtonsUI() {
   const micBtn = document.getElementById('micBtnIcon');
   if (micBtn) {
@@ -991,12 +956,6 @@ function updateMediaButtonsUI() {
 
 function toggleMic() {
   isMicOn = !isMicOn;
-  // ✅ FIX: only touch the actual audio track when we have a REAL
-  // microphone (camera on). Before the camera is turned on, localStream
-  // is the silent placeholder (see initDummyStream) which must stay
-  // muted regardless of this button - there's no real mic to toggle yet.
-  // isMicOn is still remembered and gets applied automatically the moment
-  // the camera/mic turns on (see toggleCamera()).
   if (isCameraOn && localStream) {
     localStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
   }
@@ -1011,10 +970,6 @@ async function toggleCamera() {
       cameraStream = null;
     }
     isCameraOn = false;
-    // initDummyStream() sets localStream and, via replaceOutgoingTracks(),
-    // pushes the placeholder video + your current mic state to every peer
-    // - ✅ FIX: previously nothing was pushed here, so peers stayed frozen
-    // on your last camera frame after you turned the camera off.
     initDummyStream();
     updateMediaButtonsUI();
     showToast('📷 បានបិទកាមេរ៉ា', 'info');
@@ -1024,16 +979,11 @@ async function toggleCamera() {
       isCameraOn = true;
       if (dummyAnimFrame) cancelAnimationFrame(dummyAnimFrame);
 
-      // ✅ FIX: respect the user's existing mic on/off choice instead of
-      // always sending live mic audio the instant the camera turns on.
       cameraStream.getAudioTracks().forEach(track => track.enabled = isMicOn);
 
       localStream = cameraStream;
       if (localVideo) localVideo.srcObject = localStream;
 
-      // ✅ FIX: previously only the VIDEO sender was replaced, so peers
-      // never actually received your real microphone audio - they kept
-      // hearing the silent placeholder track forever.
       replaceOutgoingTracks(localStream);
 
       updateMediaButtonsUI();
@@ -1046,10 +996,6 @@ async function toggleCamera() {
 
 async function toggleScreenShare() {
   if (isScreenSharing) {
-    // ✅ FIX: explicitly close the screen-share calls instead of only
-    // stopping the local tracks. Stopping the track eventually ends the
-    // connection, but closing the call immediately tells every viewer
-    // right away and reliably removes their screen-share tile.
     Object.keys(screenCalls).forEach(pId => {
       if (screenCalls[pId]) screenCalls[pId].close();
       delete screenCalls[pId];
@@ -1059,9 +1005,6 @@ async function toggleScreenShare() {
       screenStream = null;
     }
     isScreenSharing = false;
-    // ✅ FIX: the sharer never saw their own screen-share tile at all
-    // (addRemoteScreenVideo was only ever called for OTHER people's
-    // streams) - remove our own self-preview tile now that sharing stopped.
     removeRemoteScreenVideo(myId);
     showToast('🖥️ បានឈប់ចែករំលែកអេក្រង់', 'info');
   } else {
@@ -1069,9 +1012,6 @@ async function toggleScreenShare() {
       screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       isScreenSharing = true;
 
-      // ✅ FIX: show a self-preview tile immediately, the same way Discord
-      // shows you your own share - previously nothing was ever rendered
-      // locally for the person doing the sharing.
       addRemoteScreenVideo(myId, screenStream, myUsername + ' (អ្នក)');
       
       Object.keys(userNamesMap).forEach(peerId => {
@@ -1354,9 +1294,6 @@ function finalizeLogin(data) {
     const adminRoleDisplay = document.getElementById('adminRoleDisplay');
     if (adminRoleDisplay) adminRoleDisplay.textContent = currentUserRole.toUpperCase();
 
-    // ✅ FIX: this button had display:none in the HTML and nothing ever
-    // un-hid it after login, so it permanently disappeared for every admin.
-    // Only full admins (not supervisors) can create users/rooms.
     const tabBtnNewRoom = document.getElementById('tabBtnNewRoom');
     if (tabBtnNewRoom) {
       tabBtnNewRoom.style.display = (currentUserRole === 'admin') ? 'inline-block' : 'none';
@@ -1422,8 +1359,6 @@ function leaveRoom() {
       if (peerCalls[pId]) peerCalls[pId].close();
     });
   }
-  // ✅ FIX: screen-share calls live in their own map now and were never
-  // closed on leave, potentially leaving stale connections/tiles behind.
   if (screenCalls) {
     Object.keys(screenCalls).forEach(pId => {
       if (screenCalls[pId]) screenCalls[pId].close();
@@ -1558,9 +1493,6 @@ function switchAdminTab(tab) {
     }
     var tabBtnNewRoom = document.getElementById('tabBtnNewRoom');
     if (tabBtnNewRoom) tabBtnNewRoom.classList.add('active');
-    // ✅ FIX: make sure the room dropdown is fresh every time this tab is
-    // opened (e.g. a room created in a previous visit should show up here
-    // without needing a full page reload).
     loadRooms();
   }
 }
@@ -1579,17 +1511,11 @@ async function loadRooms() {
     var select = document.getElementById('roomSelect');
     if (select) select.innerHTML = optionsHtml;
 
-    // ✅ FIX: this combobox (room picker in the admin "create new user" form)
-    // was never populated anywhere - it stayed permanently empty, so admins
-    // had no room to assign a new user to.
     var userRoomSelect = document.getElementById('userAssignedRoomSelect');
     if (userRoomSelect) userRoomSelect.innerHTML = optionsHtml;
   } catch (err) {}
 }
 
-// ✅ FIX: "បង្កើត User" button called this function, but it never existed
-// in script.js at all - the onclick handler silently failed (console
-// showed "createNewUser is not defined"), so nothing ever happened.
 async function createNewUser() {
   var usernameInput = document.getElementById('newUsername');
   var passwordInput = document.getElementById('newPassword');
@@ -1633,8 +1559,6 @@ async function createNewUser() {
   }
 }
 
-// ✅ FIX: same problem as createNewUser() above - "បង្កើតបន្ទប់" button
-// called a function that never existed in script.js.
 async function createNewRoom() {
   var roomIdInput = document.getElementById('newRoomId');
   var roomId = roomIdInput ? roomIdInput.value.trim() : '';
@@ -1658,8 +1582,6 @@ async function createNewRoom() {
     showToast(data.message || '✅ បង្កើតបន្ទប់ជោគជ័យ!', 'success');
     if (roomIdInput) roomIdInput.value = '';
 
-    // Refresh every dropdown/monitor that depends on the room list so the
-    // new room shows up immediately without a page reload.
     loadRooms();
     var tabRooms = document.getElementById('tab-rooms');
     if (tabRooms && !tabRooms.classList.contains('hidden')) {
